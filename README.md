@@ -99,3 +99,11 @@ shared prompt. Compilation needs about 633 MiB of temporary disk space for raw
 RGB frames, plus input and encoded files. Rendering and encoding run offline.
 Repeated artifact hashes are checked with the installed Pillow and FFmpeg
 versions; byte identity across different tool versions is not established.
+
+The budget ledger is a separate, local server primitive. Only trusted operator
+code may record an approval and per-attempt quote. Its database needs an existing
+private, durable parent directory. It reserves integer USD cents under a SQLite
+write transaction and retains idempotency across restarts. The P0 limits are
+US$10, six attempts, and 180 minutes; an approval may set lower limits.
+Reservations do not authorize provider calls. Submission states and actual-charge
+reconciliation are still pending, and the offline CLI does not create approvals.
