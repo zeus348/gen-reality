@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Locked Generative Reality configuration, version 1.4",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": "1.4"
+    },
+    "date": {
+      "const": "2026-11-01"
+    },
+    "scope": {
+      "const": "fixed_camera_feasibility_non_human"
+    },
+    "fixture": {
+      "type": "object",
+      "properties": {
+        "clipSeconds": {
+          "const": 5
+        },
+        "inputSecondsRange": {
+          "const": [
+            5,
+            20
+          ]
+        },
+        "trim": {
+          "const": "first_five_seconds"
+        },
+        "width": {
+          "const": 1280
+        },
+        "height": {
+          "const": 720
+        },
+        "fps": {
+          "const": 24
+        },
+        "frames": {
+          "const": 120
+        },
+        "codec": {
+          "const": "h264"
+        },
+        "pixFmt": {
+          "const": "yuv420p"
+        },
+        "audio": {
+          "const": false
+        },
+        "orientation": {
+          "const": "landscape_letterbox_portrait"
+        }
+      },
+      "required": [
+        "clipSeconds",
+        "inputSecondsRange",
+        "trim",
+        "width",
+        "height",
+        "fps",
+        "frames",
+        "codec",
+        "pixFmt",
+        "audio",
+        "orientation"
+      ],
+      "additionalProperties": false
+    },
+    "asset": {
+      "type": "object",
+      "properties": {
+        "mime": {
+          "const": "image/png"
+        },
+        "channels": {
+          "const": 4
+        },
+        "nonHuman": {
+          "const": true
+        },
+        "alphaRequired": {
+          "const": true
+        },
+        "automaticMatte": {
+          "const": false
+        }
+      },
+      "required": [
+        "mime",
+        "channels",
+        "nonHuman",
+        "alphaRequired",
+        "automaticMatte"
+      ],
+      "additionalProperties": false
+    },
+    "placement": {
+      "type": "object",
+      "properties": {
+        "coordinates": {
+          "const": [
+            "u",
+            "v",
+            "heightFrac"
+          ]
+        },
+        "rotationDeg": {
+          "const": 0
+        },
+        "motionKeyframes": {
+          "const": false
+        }
+      },
+      "required": [
+        "coordinates",
+        "rotationDeg",
+        "motionKeyframes"
+      ],
+      "additionalProperties": false
+    },
+    "sdk": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "const": "python"
+        },
+        "package": {
+          "const": "runwayml"
+        },
+        "version": {
+          "const": "PIN_EXACT_VERIFIED_RELEASE_BEFORE_PAID_POST"
+        },
+        "createMethod": {
+          "const": "video_to_video.create"
+        },
+        "uploadMethod": {
+          "const": "uploads.create_ephemeral"
+        },
+        "model": {
+          "const": "aleph2"
+        },
+        "route": {
+          "const": "POST /v1/video_to_video"
+        },
+        "createMaxRetries": {
+          "const": 0
+        },
+        "pollRetriesAllowed": {
+          "const": true
+        },
+        "modeA": {
+          "type": "object",
+          "properties": {
+            "keyframes": {
+              "const": [
+                {
+                  "uri": "<keyframe_runway_uri>",
+                  "seconds": 0
+                }
+              ]
+            }
+          },
+          "required": [
+            "keyframes"
+          ],
+          "additionalProperties": false
+        },
+        "modeB": {
+          "type": "object",
+          "properties": {
+            "keyframesField": {
+              "const": "OMITTED"
+            }
+          },
+          "required": [
+            "keyframesField"
+          ],
+          "additionalProperties": false
+        },
+        "maskParameter": {
+          "const": false
+        }
+      },
+      "required": [
+        "language",
+        "package",
+        "version",
+        "createMethod",
+        "uploadMethod",
+        "model",
+        "route",
+        "createMaxRetries",
+        "pollRetriesAllowed",
+        "modeA",
+        "modeB",
+        "maskParameter"
+      ],
+      "additionalProperties": false
+    },
+    "paidBudget": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "const": "USD"
+        },
+        "maxUsd": {
+          "const": "10.00"
+        },
+        "maxAttempts": {
+          "const": 6
+        },
+        "maxElapsedMinutes": {
+          "const": 180
+        },
+        "illustrativeAlephRateUsdPerOutputSecond": {
+          "const": "0.28"
+        },
+        "sourcePricing": {
+          "const": "https://docs.dev.runwayml.com/guides/pricing/"
+        },
+        "priceMustBeReverified": {
+          "const": true
+        },
+        "authorization": {
+          "const": "server-side approved run budget, not client boolean"
+        }
+      },
+      "required": [
+        "currency",
+        "maxUsd",
+        "maxAttempts",
+        "maxElapsedMinutes",
+        "illustrativeAlephRateUsdPerOutputSecond",
+        "sourcePricing",
+        "priceMustBeReverified",
+        "authorization"
+      ],
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "p0Views": {
+          "const": [
+            "source",
+            "matching_guide",
+            "raw_generation"
+          ]
+        },
+        "p1OptionalFourthView": {
+          "const": "preserved_composite"
+        },
+        "requiredDimensions": {
+          "const": [
+            "identity",
+            "motion",
+            "scene",
+            "placement"
+          ]
+        },
+        "minimumPerDimension": {
+          "const": 3
+        },
+        "normalSpeedPlays": {
+          "const": 2
+        },
+        "matchedTimestampsSec": {
+          "const": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "humanReviewerRequired": {
+          "const": true
+        }
+      },
+      "required": [
+        "p0Views",
+        "p1OptionalFourthView",
+        "requiredDimensions",
+        "minimumPerDimension",
+        "normalSpeedPlays",
+        "matchedTimestampsSec",
+        "humanReviewerRequired"
+      ],
+      "additionalProperties": false
+    },
+    "outcomes": {
+      "const": [
+        "visualEffectDemonstrated",
+        "automatedWorkflowComplete"
+      ]
+    },
+    "verdicts": {
+      "const": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "NOT_RUN"
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "date",
+    "scope",
+    "fixture",
+    "asset",
+    "placement",
+    "sdk",
+    "paidBudget",
+    "review",
+    "outcomes",
+    "verdicts"
+  ],
+  "additionalProperties": false
+}

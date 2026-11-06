@@ -1,0 +1,1 @@
+"""Prepared transparent asset inputs."""
