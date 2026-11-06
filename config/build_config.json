@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "1.4",
+  "date": "2026-11-01",
+  "scope": "fixed_camera_feasibility_non_human",
+  "fixture": {
+    "clipSeconds": 5,
+    "inputSecondsRange": [
+      5,
+      20
+    ],
+    "trim": "first_five_seconds",
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "frames": 120,
+    "codec": "h264",
+    "pixFmt": "yuv420p",
+    "audio": false,
+    "orientation": "landscape_letterbox_portrait"
+  },
+  "asset": {
+    "mime": "image/png",
+    "channels": 4,
+    "nonHuman": true,
+    "alphaRequired": true,
+    "automaticMatte": false
+  },
+  "placement": {
+    "coordinates": [
+      "u",
+      "v",
+      "heightFrac"
+    ],
+    "rotationDeg": 0,
+    "motionKeyframes": false
+  },
+  "sdk": {
+    "language": "python",
+    "package": "runwayml",
+    "version": "PIN_EXACT_VERIFIED_RELEASE_BEFORE_PAID_POST",
+    "createMethod": "video_to_video.create",
+    "uploadMethod": "uploads.create_ephemeral",
+    "model": "aleph2",
+    "route": "POST /v1/video_to_video",
+    "createMaxRetries": 0,
+    "pollRetriesAllowed": true,
+    "modeA": {
+      "keyframes": [
+        {
+          "uri": "<keyframe_runway_uri>",
+          "seconds": 0
+        }
+      ]
+    },
+    "modeB": {
+      "keyframesField": "OMITTED"
+    },
+    "maskParameter": false
+  },
+  "paidBudget": {
+    "currency": "USD",
+    "maxUsd": "10.00",
+    "maxAttempts": 6,
+    "maxElapsedMinutes": 180,
+    "illustrativeAlephRateUsdPerOutputSecond": "0.28",
+    "sourcePricing": "https://docs.dev.runwayml.com/guides/pricing/",
+    "priceMustBeReverified": true,
+    "authorization": "server-side approved run budget, not client boolean"
+  },
+  "review": {
+    "p0Views": [
+      "source",
+      "matching_guide",
+      "raw_generation"
+    ],
+    "p1OptionalFourthView": "preserved_composite",
+    "requiredDimensions": [
+      "identity",
+      "motion",
+      "scene",
+      "placement"
+    ],
+    "minimumPerDimension": 3,
+    "normalSpeedPlays": 2,
+    "matchedTimestampsSec": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "humanReviewerRequired": true
+  },
+  "outcomes": [
+    "visualEffectDemonstrated",
+    "automatedWorkflowComplete"
+  ],
+  "verdicts": [
+    "PASS",
+    "FAIL",
+    "BLOCKED",
+    "NOT_RUN"
+  ]
+}
