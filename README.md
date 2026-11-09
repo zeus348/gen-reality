@@ -126,8 +126,8 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Uploads, account and pricing preflight, polling, and output downloads are still
-pending.
+Uploads, account and pricing preflight, SDK task retrieval, and output downloads
+are still pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
@@ -140,3 +140,10 @@ and publishes both records before sending. Changed inputs cannot use the old
 reservation. These hashes identify evidence; the caller must still verify the
 media, uploaded URIs, account access, and current price. The offline CLI does
 not call this path.
+
+`TaskPoller` appends polling outcomes for a known provider task ID. A local
+deadline or GET timeout preserves the job state and held cost; a later call
+resumes the same ID. Failed and canceled tasks stay terminal. Provider-reported
+success stays separate from local success until raw video validation is added.
+The retrieval callback must use GET only and save the provider response before
+returning its evidence hash. The SDK retrieval adapter is not connected yet.
