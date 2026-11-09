@@ -33,12 +33,20 @@ class Reservation:
     state: str
 
 
+@dataclass(frozen=True)
+class RecordedCharge:
+    attempt_id: str
+    actual_cents: int
+    evidence_sha256: str
+
+
 class BudgetLedger:
     """Local single-host ledger. Parent directory must already be private and durable.
 
     Only trusted operator code may call approve_run. Do not expose approval or
     quoted costs as client-controlled fields. Reservations do not permit a paid
-    POST yet; submission state and charge reconciliation are separate work.
+    POST yet; submission state is separate work. Final charges must come from
+    verified provider billing, never from client-supplied amounts or estimates.
     """
 
     def __init__(self, path: Path, *, clock=time.time):
@@ -69,6 +77,11 @@ class BudgetLedger:
                     cost_cents INTEGER NOT NULL,
                     state TEXT NOT NULL CHECK (state = 'RESERVED'),
                     PRIMARY KEY (run_id, key_sha256)
+                );
+                CREATE TABLE IF NOT EXISTS actual_charges (
+                    attempt_id TEXT PRIMARY KEY REFERENCES reservations(attempt_id),
+                    actual_cents INTEGER NOT NULL CHECK (actual_cents >= 0),
+                    evidence_sha256 TEXT NOT NULL
                 );
             """)
         # SQLite syncs database/WAL contents; persist newly created directory entries.
@@ -172,9 +185,10 @@ class BudgetLedger:
                 connection.execute("UPDATE approved_runs SET time_stopped=1 WHERE run_id=?", (run_id,))
                 reservation = None
             else:
-                usage = connection.execute("SELECT count(*) AS attempts, coalesce(sum(cost_cents), 0) AS cents "
-                                           "FROM reservations WHERE run_id=?", (run_id,)).fetchone()
-                if usage["attempts"] >= run["max_attempts"] or usage["cents"] + run["cost_cents"] > run["limit_cents"]:
+                attempts, cents, quote_exceeded = self._usage(connection, run_id)
+                if quote_exceeded:
+                    raise BudgetExceeded("A final charge exceeded its quote; new spending is blocked.")
+                if attempts >= run["max_attempts"] or cents + run["cost_cents"] > run["limit_cents"]:
                     raise BudgetExceeded("Run money or attempt limit has been reached.")
                 attempt_id = "att-" + uuid4().hex
                 connection.execute("INSERT INTO reservations VALUES (?, ?, ?, ?, ?, 'RESERVED')",
@@ -185,6 +199,47 @@ class BudgetLedger:
         if reservation is None:
             raise BudgetExceeded("Run elapsed-time limit has been reached.")
         return reservation
+
+    @staticmethod
+    def _usage(connection, run_id):
+        charges = connection.execute(
+            "SELECT r.cost_cents, c.actual_cents FROM reservations r "
+            "LEFT JOIN actual_charges c ON c.attempt_id=r.attempt_id WHERE r.run_id=?",
+            (run_id,),
+        ).fetchall()
+        # Python integers keep the total exact even if final charges exceed the cap.
+        cents = sum(row["cost_cents"] if row["actual_cents"] is None else row["actual_cents"]
+                    for row in charges)
+        quote_exceeded = any(row["actual_cents"] is not None and row["actual_cents"] > row["cost_cents"]
+                             for row in charges)
+        return len(charges), cents, quote_exceeded
+
+    def record_final_charge(self, attempt_id: str, actual_cents: int,
+                            evidence_sha256: str) -> RecordedCharge:
+        """Record verified final billing once, even if it exceeds the run limit.
+
+        Unknown or provisional charges must keep their reservation. A confirmed
+        zero charge releases money, but never refunds the attempt count or time.
+        Store the provider receipt separately and pass its SHA-256 here.
+        """
+        if type(attempt_id) is not str or re.fullmatch(r"att-[0-9a-f]{32}", attempt_id) is None:
+            raise BudgetError("Charge needs a valid reservation ID.")
+        if type(actual_cents) is not int or not 0 <= actual_cents <= 2 ** 63 - 1:
+            raise BudgetError("Final charge must be nonnegative integer cents within SQLite's range.")
+        if type(evidence_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None:
+            raise BudgetError("Final charge needs a lowercase receipt SHA-256 hash.")
+        charge = RecordedCharge(attempt_id, actual_cents, evidence_sha256)
+        with self._transaction() as connection:
+            if connection.execute("SELECT 1 FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone() is None:
+                raise BudgetError("Charge has no matching reservation.")
+            existing = connection.execute("SELECT * FROM actual_charges WHERE attempt_id=?", (attempt_id,)).fetchone()
+            if existing is not None:
+                if RecordedCharge(**dict(existing)) != charge:
+                    raise BudgetError("Final charge is already recorded and cannot be replaced.")
+                return charge
+            connection.execute("INSERT INTO actual_charges VALUES (?, ?, ?)",
+                               (attempt_id, actual_cents, evidence_sha256))
+        return charge
 
     @staticmethod
     def _reservation(row) -> Reservation:

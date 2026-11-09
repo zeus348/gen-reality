@@ -105,5 +105,9 @@ code may record an approval and per-attempt quote. Its database needs an existin
 private, durable parent directory. It reserves integer USD cents under a SQLite
 write transaction and retains idempotency across restarts. The P0 limits are
 US$10, six attempts, and 180 minutes; an approval may set lower limits.
-Reservations do not authorize provider calls. Submission states and actual-charge
-reconciliation are still pending, and the offline CLI does not create approvals.
+Verified final charges replace reserved amounts in the total. Unknown charges
+keep their reservation. The receipt hash and final amount are recorded once;
+any charge above its quote is retained and blocks further spending. A confirmed zero
+charge does not refund an attempt or reopen the elapsed-time limit.
+Reservations do not authorize provider calls. Submission states are still
+pending, and the offline CLI does not create approvals or record final charges.
