@@ -109,5 +109,14 @@ Verified final charges replace reserved amounts in the total. Unknown charges
 keep their reservation. The receipt hash and final amount are recorded once;
 any charge above its quote is retained and blocks further spending. A confirmed zero
 charge does not refund an attempt or reopen the elapsed-time limit.
-Reservations do not authorize provider calls. Submission states are still
-pending, and the offline CLI does not create approvals or record final charges.
+Reservations alone do not authorize provider calls. The offline CLI does not
+create approvals, record final charges, or call a provider.
+
+`SubmissionCoordinator` commits `SUBMITTING` before calling a trusted adapter.
+It rechecks the run limits and permits one create call per reservation. The
+adapter must disable its own retries. A timeout, invalid task ID, or process
+exit leaves `SUBMISSION_UNKNOWN` with the cost held. A restart never repeats
+that create call. Only verified task evidence can reconcile an unknown result.
+One coordinator owns each private Unix ledger until it closes; concurrent
+callers share that coordinator. Known task IDs survive restarts. Provider SDK
+integration, polling, and output downloads are still pending.
