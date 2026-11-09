@@ -1,2 +1,4 @@
 jsonschema==4.26.0
 Pillow==13.0.0
+runwayml==5.24.0
+httpx==0.28.1

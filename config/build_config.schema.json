@@ -129,7 +129,7 @@
           "const": "runwayml"
         },
         "version": {
-          "const": "PIN_EXACT_VERIFIED_RELEASE_BEFORE_PAID_POST"
+          "const": "5.24.0"
         },
         "createMethod": {
           "const": "video_to_video.create"

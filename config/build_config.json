@@ -37,7 +37,7 @@
   "sdk": {
     "language": "python",
     "package": "runwayml",
-    "version": "PIN_EXACT_VERIFIED_RELEASE_BEFORE_PAID_POST",
+    "version": "5.24.0",
     "createMethod": "video_to_video.create",
     "uploadMethod": "uploads.create_ephemeral",
     "model": "aleph2",

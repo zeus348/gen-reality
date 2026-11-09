@@ -23,8 +23,8 @@ auditing are not implemented yet. No provider key is needed for this command.
 The manifest is published last. If preparation fails while writing files, retain
 the incomplete attempt and use a new attempt ID. Existing files are never replaced.
 
-The first slice loads the locked version 1.4 configuration. It does not submit
-provider tasks, authorize spending, or verify the SDK version.
+The loader reads the locked version 1.4 configuration. It does not submit
+provider tasks or authorize spending.
 
 Use Python 3.11 or later. Install the configuration validator:
 
@@ -44,9 +44,9 @@ settings = load_config(Path("config/build_config.json"))
 
 The loader raises `ConfigError` for unreadable files, invalid UTF-8 or JSON,
 duplicate fields, files larger than 65,536 bytes, and settings that differ from
-the locked schema. It returns a new dictionary on each call. The SDK version and
-provider URI remain unverified template values. Changing them requires a separate
-schema update and review before provider integration.
+the locked schema. It returns a new dictionary on each call. The SDK version is
+pinned to the tested release. Provider URIs in the config are shape examples,
+not uploaded inputs. The adapter checks the installed SDK version before use.
 
 Run the offline tests from the repository root:
 
@@ -118,5 +118,15 @@ adapter must disable its own retries. A timeout, invalid task ID, or process
 exit leaves `SUBMISSION_UNKNOWN` with the cost held. A restart never repeats
 that create call. Only verified task evidence can reconcile an unknown result.
 One coordinator owns each private Unix ledger until it closes; concurrent
-callers share that coordinator. Known task IDs survive restarts. Provider SDK
-integration, polling, and output downloads are still pending.
+callers share that coordinator. Known task IDs survive restarts.
+
+`RunwayCreateAdapter` uses the official `runwayml` 5.24.0 SDK. Mode A sends one
+keyframe at zero seconds; Mode B omits `keyframes`. It disables SDK retries and
+HTTP redirects. Its required recorder receives the serialized request body
+before the POST, without authentication headers. Call it only through the
+coordinator after checking the account, pricing, uploaded media, and frozen
+inputs. The offline tests use HTTPX's fake transport and make no paid calls.
+Uploads, frozen-payload binding, polling, and output downloads are still pending.
+
+The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
+`28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.

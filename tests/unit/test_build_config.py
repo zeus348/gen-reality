@@ -40,11 +40,11 @@ class BuildConfigTests(unittest.TestCase):
             "rotationDeg": 0, "motionKeyframes": False,
         })
 
-    def test_provider_settings_keep_submission_unverified(self):
+    def test_provider_settings_pin_the_sdk_and_payload_contract(self):
         sdk = self.config["sdk"]
         self.assertEqual(sdk["language"], "python")
         self.assertEqual(sdk["package"], "runwayml")
-        self.assertEqual(sdk["version"], "PIN_EXACT_VERIFIED_RELEASE_BEFORE_PAID_POST")
+        self.assertEqual(sdk["version"], "5.24.0")
         self.assertEqual(sdk["createMethod"], "video_to_video.create")
         self.assertEqual(sdk["uploadMethod"], "uploads.create_ephemeral")
         self.assertEqual(sdk["model"], "aleph2")
