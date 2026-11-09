@@ -126,7 +126,17 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Uploads, frozen-payload binding, polling, and output downloads are still pending.
+Uploads, account and pricing preflight, polling, and output downloads are still
+pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
+
+`FrozenCreate` binds the request bytes, mode, SDK version, preparation manifest
+hash, pricing evidence hash, and quoted cents. Trusted server code reserves its
+`payload_sha256`, then calls `submit_frozen`. That function checks the database
+reservation and quote, compares the SDK's actual body with the frozen bytes,
+and publishes both records before sending. Changed inputs cannot use the old
+reservation. These hashes identify evidence; the caller must still verify the
+media, uploaded URIs, account access, and current price. The offline CLI does
+not call this path.

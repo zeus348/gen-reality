@@ -21,6 +21,18 @@ def _require_upload_uri(uri):
         raise ProviderError("Input must be a Runway upload URI.")
 
 
+def create_arguments(video_uri: str, prompt: str, keyframe_uri: str | None = None) -> dict:
+    """Validate the shared inputs for a frozen request or an SDK call."""
+    _require_upload_uri(video_uri)
+    if type(prompt) is not str or not prompt.strip() or len(prompt) > 1000:
+        raise ProviderError("Prompt must contain 1 to 1000 characters.")
+    arguments = {"model": "aleph2", "video_uri": video_uri, "prompt_text": prompt}
+    if keyframe_uri is not None:
+        _require_upload_uri(keyframe_uri)
+        arguments["keyframes"] = [{"uri": keyframe_uri, "seconds": 0}]
+    return arguments
+
+
 class RunwayCreateAdapter:
     """Trusted create adapter; call only through SubmissionCoordinator.
 
@@ -62,13 +74,7 @@ class RunwayCreateAdapter:
 
     def create_task(self, video_uri: str, prompt: str, *, keyframe_uri: str | None = None) -> str:
         """Mode A supplies a first-frame URI. Mode B leaves that argument out."""
-        _require_upload_uri(video_uri)
-        if type(prompt) is not str or not prompt.strip() or len(prompt) > 1000:
-            raise ProviderError("Prompt must contain 1 to 1000 characters.")
-        arguments = {"model": "aleph2", "video_uri": video_uri, "prompt_text": prompt}
-        if keyframe_uri is not None:
-            _require_upload_uri(keyframe_uri)
-            arguments["keyframes"] = [{"uri": keyframe_uri, "seconds": 0}]
+        arguments = create_arguments(video_uri, prompt, keyframe_uri)
         try:
             response = self._client.video_to_video.create(**arguments)
             if type(response.id) is not str or not response.id:
