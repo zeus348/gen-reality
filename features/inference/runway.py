@@ -34,7 +34,8 @@ def create_arguments(video_uri: str, prompt: str, keyframe_uri: str | None = Non
 
 
 def make_sdk_client(api_key: str, *, transport: httpx.BaseTransport | None = None,
-                    record_request: Callable[[bytes], None] | None = None) -> RunwayML:
+                    record_request: Callable[[bytes], None] | None = None,
+                    check_response: Callable[[httpx.Response], None] | None = None) -> RunwayML:
     """Build the pinned client with fixed origin, timeouts, and no retries."""
     if version("runwayml") != SDK_VERSION:
         raise ProviderError("Install the pinned Runway SDK before provider calls.")
@@ -46,7 +47,8 @@ def make_sdk_client(api_key: str, *, transport: httpx.BaseTransport | None = Non
 
     http_client = httpx.Client(
         transport=transport, timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False,
-        event_hooks={"request": [record_body]} if record_request is not None else {},
+        event_hooks={"request": [record_body] if record_request is not None else [],
+                     "response": [check_response] if check_response is not None else []},
     )
     try:
         return RunwayML(api_key=api_key, base_url=API_URL, max_retries=0,

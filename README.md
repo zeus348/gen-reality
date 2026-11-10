@@ -128,7 +128,7 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Uploads and account and pricing preflight are still pending.
+Account and pricing preflight are still pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
@@ -182,3 +182,16 @@ one GET without provider credentials. Identity-encoded bytes are limited to
 256 MiB. It checks a 60-second deadline between chunks; a stalled read can take
 another 30 seconds. Use this function as the completion callback. Failed downloads
 can resume the same task without a new generation or a released reservation.
+
+`upload_frozen_artifact` verifies a frozen PNG or MP4, then gives those exact
+bytes to the official SDK's `uploads.create_ephemeral` method. The server must
+supply an approved upload host set. The SDK starts the upload at Runway, then
+sends the multipart body with a separate HTTPX client. Neither request retries
+or follows redirects. The source file is not reopened after verification.
+Successful upload metadata must use identity encoding and fit within 1 MiB.
+Oversized or encoded metadata closes the response before any multipart upload.
+A successful upload publishes an immutable source-hash-to-URI record with SDK
+version and times. Its conservative expiry is 24 hours after call start.
+Current [Runway upload limits](https://docs.dev.runwayml.com/assets/uploads/) are
+512 bytes to 200 MB, and the account must have purchased credits. This path
+creates no generation. Tests intercept both HTTP clients; they make no uploads.
