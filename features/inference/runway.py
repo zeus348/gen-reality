@@ -33,6 +33,29 @@ def create_arguments(video_uri: str, prompt: str, keyframe_uri: str | None = Non
     return arguments
 
 
+def make_sdk_client(api_key: str, *, transport: httpx.BaseTransport | None = None,
+                    record_request: Callable[[bytes], None] | None = None) -> RunwayML:
+    """Build the pinned client with fixed origin, timeouts, and no retries."""
+    if version("runwayml") != SDK_VERSION:
+        raise ProviderError("Install the pinned Runway SDK before provider calls.")
+    if type(api_key) is not str or not api_key.strip():
+        raise ProviderError("A server-side Runway API key is required.")
+
+    def record_body(request):
+        record_request(request.read())
+
+    http_client = httpx.Client(
+        transport=transport, timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False,
+        event_hooks={"request": [record_body]} if record_request is not None else {},
+    )
+    try:
+        return RunwayML(api_key=api_key, base_url=API_URL, max_retries=0,
+                        timeout=httpx.Timeout(60.0, connect=10.0), http_client=http_client)
+    except BaseException:
+        http_client.close()
+        raise
+
+
 class RunwayCreateAdapter:
     """Trusted create adapter; call only through SubmissionCoordinator.
 
@@ -44,24 +67,9 @@ class RunwayCreateAdapter:
 
     def __init__(self, api_key: str, *, record_request: Callable[[bytes], None],
                  transport: httpx.BaseTransport | None = None):
-        if version("runwayml") != SDK_VERSION:
-            raise ProviderError("Install the pinned Runway SDK before creating tasks.")
-        if type(api_key) is not str or not api_key.strip():
-            raise ProviderError("A server-side Runway API key is required.")
-
-        def record_body(request):
-            record_request(request.read())
-
-        http_client = httpx.Client(
-            transport=transport, timeout=httpx.Timeout(60.0, connect=10.0),
-            follow_redirects=False, event_hooks={"request": [record_body]},
-        )
-        try:
-            self._client = RunwayML(api_key=api_key, base_url=API_URL, max_retries=0,
-                                    timeout=httpx.Timeout(60.0, connect=10.0), http_client=http_client)
-        except BaseException:
-            http_client.close()
-            raise
+        if not callable(record_request):
+            raise ProviderError("Task creation needs a request recorder.")
+        self._client = make_sdk_client(api_key, record_request=record_request, transport=transport)
 
     def close(self):
         self._client.close()

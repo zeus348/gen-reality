@@ -145,6 +145,11 @@ class RunwayTests(unittest.TestCase):
         recorder.assert_called_once()
         self.assertEqual(self.requests, [])
 
+    def test_create_cannot_disable_the_required_recorder(self):
+        with self.assertRaisesRegex(ProviderError, "request recorder"):
+            adapter = RunwayCreateAdapter(API_KEY, record_request=None, transport=httpx.MockTransport(Mock()))
+            self.addCleanup(adapter.close)
+
     def test_missing_provider_task_id_is_uncertain(self):
         for response in [{}, {"id": None}, {"id": ""}]:
             with self.subTest(response=response):

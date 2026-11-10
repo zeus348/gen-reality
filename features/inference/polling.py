@@ -8,6 +8,9 @@ from typing import Callable
 from features.inference.submission import SubmissionCoordinator, SubmissionError
 
 
+PROVIDER_STATUSES = ("PENDING", "THROTTLED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED")
+
+
 @dataclass(frozen=True)
 class TaskObservation:
     """A trusted GET result and the hash of its saved provider response."""
@@ -98,7 +101,7 @@ class TaskPoller:
             try:
                 observation = retrieve_task(job.provider_task_id)
                 if (not isinstance(observation, TaskObservation) or observation.task_id != job.provider_task_id
-                        or observation.status not in ("PENDING", "THROTTLED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED")
+                        or observation.status not in PROVIDER_STATUSES
                         or type(observation.evidence_sha256) is not str
                         or re.fullmatch(r"[0-9a-f]{64}", observation.evidence_sha256) is None):
                     raise ValueError("Provider task observation is invalid.")

@@ -17,8 +17,10 @@ visual experiment. The clean-source and non-human flags record your declarations
 
 The manifest is an **offline preparation** record. It reports `PREPARED` and
 `LOCAL_PIPELINE_ONLY`; visual and automated generation outcomes remain `NOT_RUN`.
-Provider submission, budget authorization, human review, UI, and full release
-auditing are not implemented yet. No provider key is needed for this command.
+This CLI does not authorize spending or call a provider. Server primitives for
+budgets, submission, and polling are described below. The live workflow, human
+review, UI, and full release audit remain pending. No provider key is needed for
+this command.
 
 The manifest is published last. If preparation fails while writing files, retain
 the incomplete attempt and use a new attempt ID. Existing files are never replaced.
@@ -26,7 +28,7 @@ the incomplete attempt and use a new attempt ID. Existing files are never replac
 The loader reads the locked version 1.4 configuration. It does not submit
 provider tasks or authorize spending.
 
-Use Python 3.11 or later. Install the configuration validator:
+Use Python 3.11 or later. Install the Python dependencies:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -126,8 +128,7 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Uploads, account and pricing preflight, SDK task retrieval, and output downloads
-are still pending.
+Uploads, account and pricing preflight, and output downloads are still pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
@@ -146,4 +147,10 @@ deadline or GET timeout preserves the job state and held cost; a later call
 resumes the same ID. Failed and canceled tasks stay terminal. Provider-reported
 success stays separate from local success until raw video validation is added.
 The retrieval callback must use GET only and save the provider response before
-returning its evidence hash. The SDK retrieval adapter is not connected yet.
+returning its evidence hash.
+
+`retrieve_task_once` uses the pinned SDK's GET endpoint. It limits successful
+JSON response bodies to 1 MiB, checks the task identity and status, and stores
+each response by its SHA-256. Repeated responses verify the existing file.
+Pass this function as the poller's retrieval callback. It does not download
+output video or mark local success.

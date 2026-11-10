@@ -5,6 +5,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from core.json_data import unique_fields
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = PROJECT_ROOT / "config" / "build_config.json"
@@ -21,12 +23,10 @@ def _reject_constant(value):
 
 
 def _unique_fields(pairs):
-    fields = {}
-    for name, value in pairs:
-        if name in fields:
-            raise ConfigError("Configuration must not contain duplicate fields.")
-        fields[name] = value
-    return fields
+    try:
+        return unique_fields(pairs)
+    except ValueError:
+        raise ConfigError("Configuration must not contain duplicate fields.") from None
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict:
