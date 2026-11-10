@@ -163,4 +163,12 @@ Supported codecs are H.264, HEVC, AV1, and MPEG-4. It accepts one video stream
 and at most one audio stream, with up to eight audio channels at 192 kHz.
 Every decoded frame must keep the declared dimensions; resolution changes fail.
 Content validation alone does not prove a real provider generation or visual
-quality. Downloading the output and committing local success are not wired yet.
+quality. The HTTP output downloader is still pending.
+
+`OutputCompleter` accepts a trusted GET-only download callback after a recorded
+provider success. It validates the entire MP4, publishes raw bytes and metadata,
+then commits both artifact records and local `SUCCEEDED` in one transaction.
+An interrupted commit can resume using the same verified bytes. Repeated calls
+verify completed artifacts and return the same record without downloading again.
+Money stays held until final billing is verified. Output metadata records content
+validation as `PASS`; visual and automated workflow outcomes remain `NOT_RUN`.
