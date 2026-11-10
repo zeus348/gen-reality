@@ -154,3 +154,13 @@ JSON response bodies to 1 MiB, checks the task identity and status, and stores
 each response by its SHA-256. Repeated responses verify the existing file.
 Pass this function as the poller's retrieval callback. It does not download
 output video or mark local success.
+
+`validate_raw_video` fully decodes a raw MP4 with FFmpeg and records its actual
+frame timestamps. It preserves the original bytes and accepts timing that
+differs from the normalized input. Resource limits are 256 MiB, twenty seconds,
+4096 pixels per axis, 8,847,360 pixels per frame, 120 FPS, and 2400 decoded frames.
+Supported codecs are H.264, HEVC, AV1, and MPEG-4. It accepts one video stream
+and at most one audio stream, with up to eight audio channels at 192 kHz.
+Every decoded frame must keep the declared dimensions; resolution changes fail.
+Content validation alone does not prove a real provider generation or visual
+quality. Downloading the output and committing local success are not wired yet.
