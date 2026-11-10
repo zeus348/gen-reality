@@ -128,7 +128,7 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Uploads, account and pricing preflight, and output downloads are still pending.
+Uploads and account and pricing preflight are still pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
@@ -145,7 +145,7 @@ not call this path.
 `TaskPoller` appends polling outcomes for a known provider task ID. A local
 deadline or GET timeout preserves the job state and held cost; a later call
 resumes the same ID. Failed and canceled tasks stay terminal. Provider-reported
-success stays separate from local success until raw video validation is added.
+success stays separate from local success until raw video validation finishes.
 The retrieval callback must use GET only and save the provider response before
 returning its evidence hash.
 
@@ -163,7 +163,7 @@ Supported codecs are H.264, HEVC, AV1, and MPEG-4. It accepts one video stream
 and at most one audio stream, with up to eight audio channels at 192 kHz.
 Every decoded frame must keep the declared dimensions; resolution changes fail.
 Content validation alone does not prove a real provider generation or visual
-quality. The HTTP output downloader is still pending.
+quality.
 
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
@@ -172,3 +172,13 @@ An interrupted commit can resume using the same verified bytes. Repeated calls
 verify completed artifacts and return the same record without downloading again.
 Money stays held until final billing is verified. Output metadata records content
 validation as `PASS`; visual and automated workflow outcomes remain `NOT_RUN`.
+
+`download_task_output` reads the saved success response by its hash and selects
+its first output URL. The server must supply an exact host allowlist from trusted
+provider documentation or verified operator configuration. Never derive it from
+the response or a client. The downloader requires HTTPS on port 443 and rejects
+credentials in URLs, IP addresses, and redirects. A separate HTTPX client sends
+one GET without provider credentials. Identity-encoded bytes are limited to
+256 MiB. It checks a 60-second deadline between chunks; a stalled read can take
+another 30 seconds. Use this function as the completion callback. Failed downloads
+can resume the same task without a new generation or a released reservation.
