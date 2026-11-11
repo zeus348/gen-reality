@@ -126,6 +126,11 @@ class BudgetLedger:
         if type(run_id) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", run_id) is None:
             raise BudgetError("Run ID must contain 1 to 64 letters, digits, underscores, or hyphens.")
 
+    @staticmethod
+    def _attempt_id(attempt_id):
+        if type(attempt_id) is not str or re.fullmatch(r"att-[0-9a-f]{32}", attempt_id) is None:
+            raise BudgetError("Reservation ID must be att- followed by 32 lowercase hex digits.")
+
     def approve_run(self, run_id: str, *, approved_by: str, limit_cents: int,
                     max_attempts: int, cost_cents: int, max_elapsed_minutes: int = 180):
         """Record one operator approval and trusted quote; never increase it in place."""
@@ -147,14 +152,19 @@ class BudgetLedger:
         except sqlite3.IntegrityError:
             raise BudgetError("This run already has a server-side approval.") from None
 
-    def reserve(self, run_id: str, key: str, payload_sha256: str) -> Reservation:
+    def reserve(self, run_id: str, key: str, payload_sha256: str, *,
+                attempt_id: str | None = None) -> Reservation:
         """Atomically reserve one quoted charge; repeated keys return the same attempt.
 
-        A repeated key with a different payload conflicts. Lookups still work
-        after the deadline, but cannot create another reservation or paid POST.
+        Trusted server code may supply the prepared attempt's ID in the standard
+        format. A repeated key with a different payload or attempt ID conflicts.
+        Lookups still work after the deadline, but cannot create another
+        reservation or paid POST.
         Raw idempotency keys are never stored.
         """
         self._run_id(run_id)
+        if attempt_id is not None:
+            self._attempt_id(attempt_id)
         if type(key) is not str or not key.strip() or len(key) > 512:
             raise BudgetError("Idempotency key must contain from 1 to 512 UTF-8 bytes.")
         try:
@@ -172,6 +182,8 @@ class BudgetLedger:
             if existing is not None:
                 if existing["payload_sha256"] != payload_sha256:
                     raise IdempotencyConflict("Idempotency key belongs to a different payload.")
+                if attempt_id is not None and existing["attempt_id"] != attempt_id:
+                    raise IdempotencyConflict("Idempotency key belongs to a different attempt.")
                 return self._reservation(existing)
             run = connection.execute("SELECT * FROM approved_runs WHERE run_id=?", (run_id,)).fetchone()
             if run is None:
@@ -190,11 +202,14 @@ class BudgetLedger:
                     raise BudgetExceeded("A final charge exceeded its quote; new spending is blocked.")
                 if attempts >= run["max_attempts"] or cents + run["cost_cents"] > run["limit_cents"]:
                     raise BudgetExceeded("Run money or attempt limit has been reached.")
-                attempt_id = "att-" + uuid4().hex
-                connection.execute("INSERT INTO reservations VALUES (?, ?, ?, ?, ?, 'RESERVED')",
-                                   (run_id, key_sha256, attempt_id, payload_sha256, run["cost_cents"]))
+                reserved_id = attempt_id if attempt_id is not None else "att-" + uuid4().hex
+                try:
+                    connection.execute("INSERT INTO reservations VALUES (?, ?, ?, ?, ?, 'RESERVED')",
+                                       (run_id, key_sha256, reserved_id, payload_sha256, run["cost_cents"]))
+                except sqlite3.IntegrityError:
+                    raise IdempotencyConflict("Attempt ID already belongs to another reservation.") from None
                 connection.execute("UPDATE approved_runs SET last_checked_unix=? WHERE run_id=?", (now, run_id))
-                reservation = Reservation(run_id, attempt_id, payload_sha256, run["cost_cents"], "RESERVED")
+                reservation = Reservation(run_id, reserved_id, payload_sha256, run["cost_cents"], "RESERVED")
         # Raise only after committing the stop, so an error cannot roll it back.
         if reservation is None:
             raise BudgetExceeded("Run elapsed-time limit has been reached.")
@@ -222,8 +237,7 @@ class BudgetLedger:
         zero charge releases money, but never refunds the attempt count or time.
         Store the provider receipt separately and pass its SHA-256 here.
         """
-        if type(attempt_id) is not str or re.fullmatch(r"att-[0-9a-f]{32}", attempt_id) is None:
-            raise BudgetError("Charge needs a valid reservation ID.")
+        self._attempt_id(attempt_id)
         if type(actual_cents) is not int or not 0 <= actual_cents <= 2 ** 63 - 1:
             raise BudgetError("Final charge must be nonnegative integer cents within SQLite's range.")
         if type(evidence_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None:

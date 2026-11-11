@@ -113,6 +113,11 @@ any charge above its quote is retained and blocks further spending. A confirmed 
 charge does not refund an attempt or reopen the elapsed-time limit.
 Reservations alone do not authorize provider calls. The offline CLI does not
 create approvals, record final charges, or call a provider.
+Trusted server code can pass the preparation's default `att-<32 lowercase hex
+digits>` ID to `reserve(attempt_id=...)`. That ID stays the same through submission
+and billing. A different idempotency key or run cannot claim it. Reusing the key
+with a different attempt ID fails. Custom offline IDs must use this standard
+format before they can be reserved. Omitting the ID retains generated-ID behavior.
 
 `SubmissionCoordinator` commits `SUBMITTING` before calling a trusted adapter.
 It rechecks the run limits and permits one create call per reservation. The
