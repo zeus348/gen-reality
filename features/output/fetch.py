@@ -3,6 +3,7 @@
 import ipaddress
 from io import BytesIO
 import json
+import logging
 from pathlib import Path
 import re
 import time
@@ -22,6 +23,14 @@ DOWNLOAD_SECONDS = 60.0
 
 class DownloadError(ValueError):
     """Output could not be downloaded from the recorded task."""
+
+
+def _redact_httpx_url(record: logging.LogRecord) -> bool:
+    """Keep method and status logs without exposing URL paths or signatures."""
+    if isinstance(record.args, tuple):
+        record.args = tuple(f"{value.scheme}://{value.host}/[redacted]" if isinstance(value, httpx.URL)
+                            else value for value in record.args)
+    return True
 
 
 def _output_url(task_id: str, evidence_sha256: str, evidence_root: Path,
@@ -72,6 +81,8 @@ def download_task_output(task_id: str, evidence_sha256: str, evidence_root: Path
     """
     try:
         url = _output_url(task_id, evidence_sha256, evidence_root, allowed_hosts)
+        # Keep this filter installed. Removing it could expose concurrent GETs.
+        logging.getLogger("httpx").addFilter(_redact_httpx_url)
         deadline = clock() + DOWNLOAD_SECONDS
         timeout = httpx.Timeout(30.0, connect=10.0)
         with httpx.Client(transport=transport, timeout=timeout, follow_redirects=False) as client:

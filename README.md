@@ -260,5 +260,27 @@ refresh evidence, or upload media. It uses a stable key for a new reservation
 and preserves an existing reservation. Known or uncertain submissions return
 their stored state after a restart, even without credentials or fresh evidence.
 JSON output contains submission state and task ID. Exit codes are 0 for a known
-submission, 2 for an uncertain submission, and 1 for a command failure. Upload,
-preflight, and polling command orchestration remain pending.
+submission, 2 for an uncertain submission, and 1 for a command failure. Upload
+and preflight command orchestration remain pending.
+
+`python -m app.resume` inspects or resumes an existing attempt. Supply
+`--output-root`, `--ledger`, `--run-id`, and `--attempt-id`. Active tasks use one
+SDK GET with the key named by `--api-key-env` (default `RUNWAY_API_KEY`). After
+provider success, the command downloads, validates, and saves the raw output.
+Supply each trusted output host with `--output-host`; the operator must obtain
+these hosts from trusted configuration, never from a task response or browser
+client. A later invocation gets fresh task evidence, so an expired output URL
+can be replaced without another generation. Each invocation polls at most once;
+its polling deadline is not an overall command timeout.
+
+`--status-only` makes no provider calls. Opening the ledger still recovers an
+abandoned submission claim as `SUBMISSION_UNKNOWN`. Reserved, uncertain, and
+terminal tasks require no key; uncertain submissions need verified manual
+reconciliation. Completed output is hash-verified before it is reported.
+Resume never reserves funds, records a charge, or submits a generation. JSON
+contains the saved state and output records, without signed URLs. Exit code 0
+means status inspection or local success, 2 means another state, and 1 means
+the command failed. Local success does not establish human visual acceptance.
+The downloader installs a persistent HTTPX logging filter that retains request
+methods, origins, and response status while hiding URL paths and queries. It
+also protects concurrent downloads when SDK INFO logging is enabled.
