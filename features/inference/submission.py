@@ -95,26 +95,53 @@ class SubmissionCoordinator:
             reservation = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone()
             if reservation is None:
                 raise SubmissionError("Submission has no matching reservation.")
-            run_id = reservation["run_id"]
-            run = connection.execute("SELECT * FROM approved_runs WHERE run_id=?", (run_id,)).fetchone()
-            now = self.ledger._now()
-            if now < run["last_checked_unix"]:
-                raise BudgetError("Budget clock moved backwards; submission is blocked.")
-            if run["time_stopped"] or now >= run["deadline_unix"]:
-                connection.execute("UPDATE approved_runs SET time_stopped=1 WHERE run_id=?", (run_id,))
-                claimed = False
-            else:
-                attempts, cents, quote_exceeded = self.ledger._usage(connection, run_id)
-                if quote_exceeded or cents > run["limit_cents"] or attempts > run["max_attempts"]:
-                    raise BudgetExceeded("Run spending limits block submission.")
-                if connection.execute("SELECT 1 FROM actual_charges WHERE attempt_id=?", (attempt_id,)).fetchone():
-                    raise SubmissionError("A settled reservation cannot start a new submission.")
+            claimed = self._limits_allow_send(connection, reservation)
+            if claimed:
                 connection.execute("INSERT INTO submission_jobs VALUES (?, 'SUBMITTING', NULL, NULL)", (attempt_id,))
-                connection.execute("UPDATE approved_runs SET last_checked_unix=? WHERE run_id=?", (now, run_id))
-                claimed = True
         if not claimed:
             raise BudgetExceeded("Run elapsed-time limit has been reached.")
         return True
+
+    def _limits_allow_send(self, connection, reservation, now: float | None = None) -> bool:
+        """Use the same authority checks at claim and at the final send boundary."""
+        run_id, attempt_id = reservation["run_id"], reservation["attempt_id"]
+        run = connection.execute("SELECT * FROM approved_runs WHERE run_id=?", (run_id,)).fetchone()
+        now = self.ledger._now() if now is None else now
+        if now < run["last_checked_unix"]:
+            raise BudgetError("Budget clock moved backwards; submission is blocked.")
+        if run["time_stopped"] or now >= run["deadline_unix"]:
+            connection.execute("UPDATE approved_runs SET time_stopped=1 WHERE run_id=?", (run_id,))
+            return False
+        attempts, cents, quote_exceeded = self.ledger._usage(connection, run_id)
+        if quote_exceeded or cents > run["limit_cents"] or attempts > run["max_attempts"]:
+            raise BudgetExceeded("Run spending limits block submission.")
+        if connection.execute("SELECT 1 FROM actual_charges WHERE attempt_id=?", (attempt_id,)).fetchone():
+            raise SubmissionError("A settled reservation cannot start a new submission.")
+        connection.execute("UPDATE approved_runs SET last_checked_unix=? WHERE run_id=?", (now, run_id))
+        return True
+
+    def require_send_allowed(self, attempt_id: str, *,
+                              check_current: Callable[[float], None] | None = None) -> None:
+        """Recheck a claimed reservation after request evidence is durable."""
+        with self._mutex:
+            self._require_open()
+            if self.get(attempt_id).state != "SUBMITTING":
+                raise SubmissionError("Final send requires a claimed submission.")
+            def check_authority():
+                with self.ledger._transaction() as connection:
+                    reservation = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone()
+                    now = self.ledger._now()
+                    allowed = self._limits_allow_send(connection, reservation, now)
+                if not allowed:
+                    raise BudgetExceeded("Run elapsed-time limit has been reached.")
+                return now
+
+            check_authority()
+            if check_current is not None:
+                # Keep the first high-water mark durable. Check budget and evidence
+                # against the same final timestamp, including a deadline or rollback.
+                now = check_authority()
+                check_current(now)
 
     @staticmethod
     def _task_id(task_id):

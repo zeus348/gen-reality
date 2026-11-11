@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
+from typing import Callable
 
 import httpx
 
@@ -68,12 +69,14 @@ class FrozenCreate:
 
 
 def submit_frozen(coordinator: SubmissionCoordinator, attempt_id: str, frozen: FrozenCreate,
-                  output_root: Path, api_key: str, *, transport: httpx.BaseTransport | None = None) -> Submission:
+                  output_root: Path, api_key: str, *, transport: httpx.BaseTransport | None = None,
+                  before_send: Callable[[], None] | None = None) -> Submission:
     """Submit matching reserved inputs and publish request evidence before the POST.
 
     Only trusted server code may provide the root, API key, and frozen inputs.
     Duplicate calls return the stored state, even without a current API key.
     A recording failure after SUBMITTING remains unknown and cannot be replayed.
+    Application callers use submit_checked to supply the final evidence gate.
     """
     with coordinator.ledger._connection() as connection:
         row = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone()
@@ -98,6 +101,8 @@ def submit_frozen(coordinator: SubmissionCoordinator, attempt_id: str, frozen: F
             raise ProviderError("SDK request differs from the frozen request.")
         publish_bytes(root, prefix + "frozen_request.json", record)
         publish_bytes(root, prefix + "request.json", body)
+        if before_send is not None:
+            before_send()
 
     with RunwayCreateAdapter(api_key, record_request=record_request, transport=transport) as adapter:
         return coordinator.submit_once(attempt_id, lambda: adapter.create_task(

@@ -237,4 +237,14 @@ values, credits, and expiry times, then saves complete `FrozenCreate` fields
 before reservation. This permits request reconstruction after a restart.
 An account refresh creates a new check record while preserving the frozen
 payload identity. The result grants no spending authority. Its freshness must
-be checked again at the final send boundary; that integration is still pending.
+be checked again at the final send boundary.
+
+`submit_checked` is the application submission entry point. It matches the saved
+check to the run and reservation, then uses the existing one-shot SDK path.
+After both request records are durable, it verifies the check again and rechecks
+run limits, unsettled cost, clock order, and evidence freshness before the POST.
+An expired initial check leaves the reservation untouched. A failure after the
+durable submission claim remains `SUBMISSION_UNKNOWN`, with no automatic replay.
+Known or uncertain submissions return their saved state even after evidence
+expires. The application must use the same provider account key for upload,
+account checks, and submission. CLI orchestration remains pending.
