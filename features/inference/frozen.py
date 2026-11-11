@@ -19,7 +19,8 @@ class FrozenCreate:
     """Trusted inputs verified by the caller; hashes identify external evidence.
 
     The preparation hash identifies its manifest, which names the frozen media.
-    The pricing hash identifies the current account and price-check evidence.
+    The pricing hash identifies price-check evidence. Account checks are separate
+    so a fresh account GET does not change a reserved request's identity.
     These hashes bind identity; this record does not verify those checks itself.
     """
 

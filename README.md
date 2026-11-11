@@ -230,3 +230,11 @@ selects the normalized source and first keyframe; Mode B selects the composited
 guide and omits the keyframe. It retains the declared source kind. This reader
 checks frozen record identity and consistency; media validation and guidance
 compilation remain the preparation writer's responsibility.
+
+`check_prepared_request` joins the verified snapshot, matching upload records,
+current price quote, and account evidence. It checks their hashes, recorded
+values, credits, and expiry times, then saves complete `FrozenCreate` fields
+before reservation. This permits request reconstruction after a restart.
+An account refresh creates a new check record while preserving the frozen
+payload identity. The result grants no spending authority. Its freshness must
+be checked again at the final send boundary; that integration is still pending.
