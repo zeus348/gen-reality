@@ -170,6 +170,17 @@ Every decoded frame must keep the declared dimensions; resolution changes fail.
 Content validation alone does not prove a real provider generation or visual
 quality.
 
+`plan_review_frames` plans the five review samples at 0, 1, 2, 3, and 4 seconds.
+Pass the validated normalized source timestamps and the raw timestamps and
+declared duration. It records actual source and nearest raw frame indexes and
+timestamps, choosing the earlier frame on an exact tie. It preserves timestamp
+offsets, including the source validator's small tolerance around zero, and
+reports position within the raw timestamp span separately from the
+declared duration flag. A positive first timestamp is valid; the last timestamp
+is not playback end. Container duration can include longer audio, so the flag
+does not prove video coverage. This helper creates no images or acceptance
+verdicts and does not bind frames to an attempt; those integration steps remain.
+
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
 then commits both artifact records and local `SUCCEEDED` in one transaction.
