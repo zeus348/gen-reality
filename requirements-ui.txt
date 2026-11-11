@@ -1,0 +1,2 @@
+# Optional browser tests. Install a local Chromium browser separately.
+playwright==1.62.0

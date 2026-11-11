@@ -1,1 +1,369 @@
 # gen-reality
+
+Prepare an offline attempt from a clean fixed-camera clip and a prepared PNG:
+
+```sh
+python -m app.prepare --source scene.mp4 --asset creature.png \
+  --u 0.5 --v 0.6 --height-frac 0.25 \
+  --non-human --confirm-clean-source --output-root runs
+```
+
+Install the requirements below and FFmpeg first. The command emits JSON with
+the manifest path, size, and hash. It keeps originals, normalized video, placement,
+prompt, and both guidance artifacts under one immutable attempt. Give a new
+`--attempt-id` for each placement edit. Mark test inputs with
+`--source-kind synthetic_fixture`; use fresh clean camera footage for a real
+visual experiment. The clean-source and non-human flags record your declarations.
+
+The manifest is an **offline preparation** record. It reports `PREPARED` and
+`LOCAL_PIPELINE_ONLY`; visual and automated generation outcomes remain `NOT_RUN`.
+This CLI does not authorize spending or call a provider. Server primitives for
+budgets, submission, and polling are described below. The live workflow, human
+review, UI, and full release audit remain pending. No provider key is needed for
+this command.
+
+The manifest is published last. If preparation fails while writing files, retain
+the incomplete attempt and use a new attempt ID. Existing files are never replaced.
+
+The loader reads the locked version 1.4 configuration. It does not submit
+provider tasks or authorize spending.
+
+Use Python 3.11 or later. Install the Python dependencies:
+
+```sh
+python -m pip install -r requirements.txt
+```
+
+Load the default configuration, or pass a path to a JSON file:
+
+```python
+from pathlib import Path
+from core.config import load_config
+
+settings = load_config()
+settings = load_config(Path("config/build_config.json"))
+```
+
+The loader raises `ConfigError` for unreadable files, invalid UTF-8 or JSON,
+duplicate fields, files larger than 65,536 bytes, and settings that differ from
+the locked schema. It returns a new dictionary on each call. The SDK version is
+pinned to the tested release. Provider URIs in the config are shape examples,
+not uploaded inputs. The adapter checks the installed SDK version before use.
+
+Run the offline tests from the repository root:
+
+```sh
+python -m unittest discover -s tests/unit -v
+```
+
+Prepared assets must be single-frame, 8-bit RGBA PNGs. Confirm that the asset is
+non-human; the program does not detect its subject. It preserves the original
+bytes and all alpha values. At least one pixel must have zero alpha and one must
+have nonzero alpha. Files are limited to 32 MiB, each dimension to 16,384 pixels,
+and total size to 16,777,216 pixels.
+
+```python
+from features.asset.ingest import load_asset
+
+asset = load_asset(Path("creature.png"), non_human=True)
+```
+
+Artifact storage currently requires Unix directory handles and hard links. Use a
+private application-owned root on one filesystem. `publish_bytes` publishes each
+relative path once; `read_verified` checks its recorded size and SHA-256. New
+placement attempts must use new paths. These functions do not prevent the owner
+of the storage directory from changing files outside the application.
+
+Video normalization requires `ffmpeg` and `ffprobe` with the H.264 encoder.
+The current checks use FFmpeg 7.1.5. Inputs must be MP4 or MOV files of 5–20
+seconds, up to 256 MiB, 4096 pixels on either axis, and 8,847,360 pixels per
+frame. Normalization keeps the original bytes and returns a five-second silent
+H.264 clip with 120 frames at 1280×720 and 24 FPS. It preserves the display aspect
+ratio with black bars and decodes the whole source before accepting the trim.
+
+```python
+from features.media.ingest import normalize_video
+
+video = normalize_video(Path("clean-scene.mp4"))
+```
+
+Compile both guidance modes from that normalized video, asset, and placement:
+
+```python
+from features.guidance.video import compile_guidance
+from features.placement.math import Placement
+
+guidance = compile_guidance(video, asset, Placement(0.5, 0.6, 0.25))
+```
+
+The result contains a first-frame PNG, a five-second MP4, their hashes, and one
+shared prompt. Compilation needs about 633 MiB of temporary disk space for raw
+RGB frames, plus input and encoded files. Rendering and encoding run offline.
+Repeated artifact hashes are checked with the installed Pillow and FFmpeg
+versions; byte identity across different tool versions is not established.
+
+The budget ledger is a separate, local server primitive. Only trusted operator
+code may record an approval and per-attempt quote. Its database needs an existing
+private, durable parent directory. It reserves integer USD cents under a SQLite
+write transaction and retains idempotency across restarts. The P0 limits are
+US$10, six attempts, and 180 minutes; an approval may set lower limits.
+Verified final charges replace reserved amounts in the total. Unknown charges
+keep their reservation. The receipt hash and final amount are recorded once;
+any charge above its quote is retained and blocks further spending. A confirmed zero
+charge does not refund an attempt or reopen the elapsed-time limit.
+Reservations alone do not authorize provider calls. The offline CLI does not
+create approvals, record final charges, or call a provider.
+Trusted server code can pass the preparation's default `att-<32 lowercase hex
+digits>` ID to `reserve(attempt_id=...)`. That ID stays the same through submission
+and billing. A different idempotency key or run cannot claim it. Reusing the key
+with a different attempt ID fails. Custom offline IDs must use this standard
+format before they can be reserved. Omitting the ID retains generated-ID behavior.
+
+`SubmissionCoordinator` commits `SUBMITTING` before calling a trusted adapter.
+It rechecks the run limits and permits one create call per reservation. The
+adapter must disable its own retries. A timeout, invalid task ID, or process
+exit leaves `SUBMISSION_UNKNOWN` with the cost held. A restart never repeats
+that create call. Only verified task evidence can reconcile an unknown result.
+One coordinator owns each private Unix ledger until it closes; concurrent
+callers share that coordinator. Known task IDs survive restarts.
+
+`RunwayCreateAdapter` uses the official `runwayml` 5.24.0 SDK. Mode A sends one
+keyframe at zero seconds; Mode B omits `keyframes`. It disables SDK retries and
+HTTP redirects. Its required recorder receives the serialized request body
+before the POST, without authentication headers. Call it only through the
+coordinator after checking the account, pricing, uploaded media, and frozen
+inputs. The offline tests use HTTPX's fake transport and make no paid calls.
+Full submission preflight is still pending.
+
+The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
+`28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
+
+`FrozenCreate` binds the request bytes, mode, SDK version, preparation manifest
+hash, pricing evidence hash, and quoted cents. Trusted server code reserves its
+`payload_sha256`, then calls `submit_frozen`. That function checks the database
+reservation and quote, compares the SDK's actual body with the frozen bytes,
+and publishes both records before sending. Changed inputs cannot use the old
+reservation. These hashes identify evidence; the caller must still verify the
+media, uploaded URIs, account access, and current price. The offline CLI does
+not call this path.
+
+`TaskPoller` appends polling outcomes for a known provider task ID. A local
+deadline or GET timeout preserves the job state and held cost; a later call
+resumes the same ID. Failed and canceled tasks stay terminal. Provider-reported
+success stays separate from local success until raw video validation finishes.
+The retrieval callback must use GET only and save the provider response before
+returning its evidence hash.
+
+`retrieve_task_once` uses the pinned SDK's GET endpoint. It limits successful
+JSON response bodies to 1 MiB, checks the task identity and status, and stores
+each response by its SHA-256. Repeated responses verify the existing file.
+Pass this function as the poller's retrieval callback. It does not download
+output video or mark local success.
+
+`validate_raw_video` fully decodes a raw MP4 with FFmpeg and records its actual
+frame timestamps. It preserves the original bytes and accepts timing that
+differs from the normalized input. Resource limits are 256 MiB, twenty seconds,
+4096 pixels per axis, 8,847,360 pixels per frame, 120 FPS, and 2400 decoded frames.
+Supported codecs are H.264, HEVC, AV1, and MPEG-4. It accepts one video stream
+and at most one audio stream, with up to eight audio channels at 192 kHz.
+Every decoded frame must keep the declared dimensions; resolution changes fail.
+Content validation alone does not prove a real provider generation or visual
+quality.
+
+`plan_review_frames` plans the five review samples at 0, 1, 2, 3, and 4 seconds.
+Pass the validated normalized source timestamps and the raw timestamps and
+declared duration. It records actual source and nearest raw frame indexes and
+timestamps, choosing the earlier frame on an exact tie. It preserves timestamp
+offsets, including the source validator's small tolerance around zero, and
+reports position within the raw timestamp span separately from the
+declared duration flag. A positive first timestamp is valid; the last timestamp
+is not playback end. Container duration can include longer audio, so the flag
+does not prove video coverage. This helper creates no images or acceptance
+verdicts. The review builder below binds its plan to one verified attempt.
+
+`extract_frame_png` extracts one decoded frame index from already validated MP4
+bytes and matching dimensions and frame count. FFmpeg keeps decoded geometry
+without automatic rotation, scaling, or frame-rate conversion. The helper uses
+private temporary files, then checks that the one output is a fully decodable
+8-bit RGB PNG with the expected dimensions and at most 32 MiB. It returns derived PNG
+bytes; the caller retains the original video and timestamps. The review builder
+handles attempt binding and immutable publication; visual acceptance is separate.
+
+`build_review_evidence` verifies one attempt's preparation, saved request check,
+reservation, actual submitted request bytes, completed raw output, metadata, and
+saved provider success response before publishing review samples. Its manifest
+references the original source, normalized five-second sample basis, actual
+provider input and guide, unchanged raw video, and five source/guide/raw PNG
+references. Mode A reuses its static keyframe PNG; Mode B samples its guide clip.
+It records native frame indexes, timestamps, offsets, and duration annotations.
+PNGs keep decoded geometry without applying rotation metadata; these records do
+not verify display orientation or video coverage. Matching repeats verify and
+reuse existing bytes, interrupted publication can resume, and the manifest is
+published last. Expired checks remain readable. Visual and automated workflow
+outcomes stay `NOT_RUN`; the offline fixtures do not establish a live generation.
+
+`OutputCompleter` accepts a trusted GET-only download callback after a recorded
+provider success. It validates the entire MP4, publishes raw bytes and metadata,
+then commits both artifact records and local `SUCCEEDED` in one transaction.
+An interrupted commit can resume using the same verified bytes. Repeated calls
+verify completed artifacts and return the same record without downloading again.
+Money stays held until final billing is verified. Output metadata records content
+validation as `PASS`; visual and automated workflow outcomes remain `NOT_RUN`.
+
+`download_task_output` reads the saved success response by its hash and selects
+its first output URL. The server must supply an exact host allowlist from trusted
+provider documentation or verified operator configuration. Never derive it from
+the response or a client. The downloader requires HTTPS on port 443 and rejects
+credentials in URLs, IP addresses, and redirects. A separate HTTPX client sends
+one GET without provider credentials. Identity-encoded bytes are limited to
+256 MiB. It checks a 60-second deadline between chunks; a stalled read can take
+another 30 seconds. Use this function as the completion callback. Failed downloads
+can resume the same task without a new generation or a released reservation.
+
+`upload_frozen_artifact` verifies a frozen PNG or MP4, then gives those exact
+bytes to the official SDK's `uploads.create_ephemeral` method. The server must
+supply an approved upload host set. The SDK starts the upload at Runway, then
+sends the multipart body with a separate HTTPX client. Neither request retries
+or follows redirects. The source file is not reopened after verification.
+Successful upload metadata must use identity encoding and fit within 1 MiB.
+Oversized or encoded metadata closes the response before any multipart upload.
+A successful upload publishes an immutable source-hash-to-URI record with SDK
+version and times. Its conservative expiry is 24 hours after call start.
+Current [Runway upload limits](https://docs.dev.runwayml.com/assets/uploads/) are
+512 bytes to 200 MB, and the account must have purchased credits. This path
+creates no generation. Tests intercept both HTTP clients; they make no uploads.
+
+`check_account_once` reads the account through the SDK and stores its exact
+response and a check summary. It checks credits, Aleph 2 model availability,
+daily usage, and configured limits against the required credit quote. Missing
+model limits or usage fail closed; explicit null limits mean unlimited.
+Successful bodies must use identity encoding and fit within 1 MiB. A ten-second
+deadline is checked between chunks; a stalled read can take another ten seconds.
+`require_current` rejects blocked checks, checks older than sixty seconds, and
+future-dated checks. Repeat this check before each paid submission, together
+with current pricing and budget approval. This account snapshot authorizes no
+spending and cannot guarantee that a later provider request will succeed.
+
+`record_price_quote` records facts checked by a trusted operator: current credits
+per second, minimum credits, USD per credit, and the maximum additional cents
+that can apply. None of these values has a default. The operator must retain
+supporting evidence and supply its verified file record. The evidence hash
+identifies those bytes; it does not verify their origin or the operator's reading.
+The quote uses the greater of the five-second cost and minimum credits, rounds
+fractional USD cents up, then adds all additional cents. Totals above US$10 fail.
+Decimal arithmetic uses its own context. Quotes expire five minutes after the
+recorded price check and never grant spending authority. Current pricing must
+still be checked by the operator before each paid submission.
+
+`read_prepared_attempt` verifies the expected run, attempt, manifest, and all nine
+frozen files. It checks attempt paths, hashes, locked configuration, placement,
+prompt, and input declarations. JSON is limited to 64 KiB per file. Mode A
+selects the normalized source and first keyframe; Mode B selects the composited
+guide and omits the keyframe. It retains the declared source kind. This reader
+checks frozen record identity and consistency; media validation and guidance
+compilation remain the preparation writer's responsibility.
+
+`check_prepared_request` joins the verified snapshot, matching upload records,
+current price quote, and account evidence. It checks their hashes, recorded
+values, credits, and expiry times, then saves complete `FrozenCreate` fields
+before reservation. This permits request reconstruction after a restart.
+An account refresh creates a new check record while preserving the frozen
+payload identity. The result grants no spending authority. Its freshness must
+be checked again at the final send boundary.
+
+`submit_checked` is the application submission entry point. It matches the saved
+check to the run and reservation, then uses the existing one-shot SDK path.
+After both request records are durable, it verifies the check again and rechecks
+run limits, unsettled cost, clock order, and evidence freshness before the POST.
+An expired initial check leaves the reservation untouched. A failure after the
+durable submission claim remains `SUBMISSION_UNKNOWN`, with no automatic replay.
+Known or uncertain submissions return their saved state even after evidence
+expires. The application must use the same provider account key for upload,
+account checks, and submission.
+
+`python -m app.submit` submits an existing saved request check. Supply
+`--output-root`, `--ledger`, `--run-id`, `--attempt-id`, and the check record's
+`--check-path`, `--check-sha256`, and `--check-size`. The path is relative to the
+run directory. The ledger must already contain operator approval with the same
+quote. `--api-key-env` names a server environment variable and defaults to
+`RUNWAY_API_KEY`; never put the key value on the command line. The key must match
+the account used to prepare the check. The command does not grant approval,
+refresh evidence, or upload media. It uses a stable key for a new reservation
+and preserves an existing reservation. Known or uncertain submissions return
+their stored state after a restart, even without credentials or fresh evidence.
+JSON output contains submission state and task ID. Exit codes are 0 for a known
+submission, 2 for an uncertain submission, and 1 for a command failure. Upload
+and preflight command orchestration remain pending.
+
+`python -m app.resume` inspects or resumes an existing attempt. Supply
+`--output-root`, `--ledger`, `--run-id`, and `--attempt-id`. Active tasks use one
+SDK GET with the key named by `--api-key-env` (default `RUNWAY_API_KEY`). After
+provider success, the command downloads, validates, and saves the raw output.
+Supply each trusted output host with `--output-host`; the operator must obtain
+these hosts from trusted configuration, never from a task response or browser
+client. A later invocation gets fresh task evidence, so an expired output URL
+can be replaced without another generation. Each invocation polls at most once;
+its polling deadline is not an overall command timeout.
+
+`--status-only` makes no provider calls. Opening the ledger still recovers an
+abandoned submission claim as `SUBMISSION_UNKNOWN`. Reserved, uncertain, and
+terminal tasks require no key; uncertain submissions need verified manual
+reconciliation. Completed output is hash-verified before it is reported.
+Resume never reserves funds, records a charge, or submits a generation. JSON
+contains the saved state and output records, without signed URLs. Exit code 0
+means status inspection or local success, 2 means another state, and 1 means
+the command failed. Local success does not establish human visual acceptance.
+The downloader installs a persistent HTTPX logging filter that retains request
+methods, origins, and response status while hiding URL paths and queries. It
+also protects concurrent downloads when SDK INFO logging is enabled.
+
+`publish_review_page` creates a static local page from the artifact reference
+returned by `build_review_evidence`. The page shows the original source, the
+actual submitted guide (a static PNG for Mode A or a video for Mode B), and the
+original raw output. Five saved sample groups use the prepared source at times
+0 through 4 seconds, with frame indexes, presentation times, and raw offsets.
+Downloads retain the original bytes. Browser playback depends on the codec;
+use a local media player if a native file cannot play. No video is converted.
+
+Create the page with the trusted review manifest's path, hash, and size:
+
+```sh
+python -m app.review --output-root runs --run-id RUN_ID --attempt-id ATTEMPT_ID \
+  --review-path attempts/ATTEMPT_ID/review/manifest.json \
+  --review-sha256 REVIEW_SHA256 --review-size REVIEW_SIZE
+```
+
+The command checks the manifest identity and every linked media file before
+publishing `attempts/ATTEMPT_ID/review/index.html`. It needs no credentials or
+ledger and makes no provider calls. It returns the page record as JSON with
+exit code 0, or a safe error with exit code 1. Repeating the same command checks
+and reuses the same page; it never replaces an existing page. Keep the run
+folder private and retain the trusted manifest reference. The page reader does
+not independently establish provider provenance. Browsers do not recheck file
+hashes during playback, so rerun the command if local files might have changed.
+
+To view one attempt, start this local server and open
+`http://127.0.0.1:8765/review/index.html` in a browser. Stop the server with Ctrl-C.
+The directory limit keeps other attempts and the run ledger outside this server.
+
+```sh
+python -m http.server 8765 --bind 127.0.0.1 \
+  --directory runs/RUN_ID/attempts/ATTEMPT_ID
+```
+
+The page has no scripts or remote assets. Human instructions require two full
+normal-speed plays, matched-frame inspection, independent scores, and annotated
+hard failures. Both outcomes remain `NOT_RUN`; the page does not save or sign a
+scorecard. Direct `file://` viewing is not tested because the managed browser
+blocks that scheme. The supported viewing path is the loopback server above.
+
+Optional browser verification uses a local Chromium executable, FFmpeg, and
+separate test dependencies. It builds real Mode A and B manifests with mocked
+provider calls and H.264/yuv420p fixtures, then checks the three native views,
+playback, five sample groups, and requests limited to the local server. This
+checks page behavior; it does not perform the human acceptance review.
+
+```sh
+python -m pip install -r requirements-ui.txt
+GEN_REALITY_BROWSER_BIN=/usr/bin/chromium python -m unittest discover -s tests/ui -v
+```
