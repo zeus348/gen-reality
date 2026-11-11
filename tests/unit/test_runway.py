@@ -159,6 +159,16 @@ class RunwayTests(unittest.TestCase):
                     adapter.create_task(VIDEO_URI, DEFAULT_PROMPT)
                 self.assertEqual(len(self.requests), 1)
 
+    def test_credential_in_task_id_is_rejected_without_exposing_it(self):
+        for task_id in [API_KEY, "task-" + API_KEY]:
+            with self.subTest(task_id=task_id):
+                self.requests.clear()
+                adapter = self.adapter(httpx.Response(200, json={"id": task_id}))
+                with self.assertRaises(ProviderError) as caught:
+                    adapter.create_task(VIDEO_URI, DEFAULT_PROMPT)
+                self.assertNotIn(API_KEY, str(caught.exception))
+                self.assertEqual(len(self.requests), 1)
+
     def test_sdk_timeout_stays_unknown_across_coordinator_restart(self):
         def timeout(request):
             raise httpx.ReadTimeout("fixture timeout", request=request)

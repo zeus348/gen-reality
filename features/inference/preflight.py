@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Callable
 
+from core.budget import BudgetLedger
 from core.json_data import unique_fields
 from core.storage import ArtifactExistsError, StoredArtifact, publish_bytes, read_verified
 from features.inference.account import ACCOUNT_MAX_AGE_SECONDS, AccountCheck, _account_limits
@@ -59,6 +60,36 @@ def _match_fields(data: dict, expected: dict) -> None:
     actual = {name: data[name] for name in expected}
     if json.dumps(actual, sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise PreflightError("Provider evidence does not match the supplied record.")
+
+
+def read_checked_request(run_root: Path, evidence: StoredArtifact, *,
+                         run_id: str, attempt_id: str) -> CheckedRequest:
+    """Restore a saved request from a trusted producer's file reference.
+
+    Verify identity without requiring freshness so known or uncertain work can
+    be inspected after expiry. This reader grants no spending authority.
+    """
+    try:
+        BudgetLedger._run_id(run_id)
+        BudgetLedger._attempt_id(attempt_id)
+        expected_path = f"attempts/{attempt_id}/provider_checks/{evidence.sha256}.json"
+        if evidence.path != expected_path:
+            raise PreflightError("Request check path does not match its attempt and hash.")
+        data = _read_record(run_root, evidence)
+        frozen = FrozenCreate(**data["frozen"])
+        _match_fields(data, {"schemaVersion": "1.4", "manifestType": "checked_provider_request",
+                            "runId": run_id, "attemptId": attempt_id,
+                            "payloadSha256": frozen.payload_sha256, "spendingAuthorized": False})
+        if data["sourceKind"] not in ("clean_camera", "synthetic_fixture"):
+            raise PreflightError("Request check has an invalid source kind.")
+        checked, expires = data["checkedAtUnix"], data["validUntilUnix"]
+        _timestamp(checked)
+        _timestamp(expires)
+        if checked >= expires:
+            raise PreflightError("Request check has an invalid time interval.")
+        return CheckedRequest(run_id, attempt_id, data["sourceKind"], frozen, checked, expires, evidence)
+    except Exception:
+        raise PreflightError("Saved request check could not be verified.") from None
 
 
 def _check_upload(root: Path, upload: UploadedArtifact, source: StoredArtifact, now: float) -> None:

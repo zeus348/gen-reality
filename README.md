@@ -247,4 +247,18 @@ An expired initial check leaves the reservation untouched. A failure after the
 durable submission claim remains `SUBMISSION_UNKNOWN`, with no automatic replay.
 Known or uncertain submissions return their saved state even after evidence
 expires. The application must use the same provider account key for upload,
-account checks, and submission. CLI orchestration remains pending.
+account checks, and submission.
+
+`python -m app.submit` submits an existing saved request check. Supply
+`--output-root`, `--ledger`, `--run-id`, `--attempt-id`, and the check record's
+`--check-path`, `--check-sha256`, and `--check-size`. The path is relative to the
+run directory. The ledger must already contain operator approval with the same
+quote. `--api-key-env` names a server environment variable and defaults to
+`RUNWAY_API_KEY`; never put the key value on the command line. The key must match
+the account used to prepare the check. The command does not grant approval,
+refresh evidence, or upload media. It uses a stable key for a new reservation
+and preserves an existing reservation. Known or uncertain submissions return
+their stored state after a restart, even without credentials or fresh evidence.
+JSON output contains submission state and task ID. Exit codes are 0 for a known
+submission, 2 for an uncertain submission, and 1 for a command failure. Upload,
+preflight, and polling command orchestration remain pending.

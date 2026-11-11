@@ -87,8 +87,9 @@ class RunwayCreateAdapter:
         arguments = create_arguments(video_uri, prompt, keyframe_uri)
         try:
             response = self._client.video_to_video.create(**arguments)
-            if type(response.id) is not str or not response.id:
-                raise ProviderError("Provider task ID is missing.")
+            if (type(response.id) is not str or not response.id
+                    or self._client.api_key in response.id):
+                raise ProviderError("Provider task ID is invalid.")
             return response.id
         except Exception:
             # Do not expose SDK errors that can contain response bodies or secrets.
