@@ -128,7 +128,7 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Account and pricing preflight are still pending.
+Current-price verification and full submission preflight are still pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
@@ -195,3 +195,14 @@ version and times. Its conservative expiry is 24 hours after call start.
 Current [Runway upload limits](https://docs.dev.runwayml.com/assets/uploads/) are
 512 bytes to 200 MB, and the account must have purchased credits. This path
 creates no generation. Tests intercept both HTTP clients; they make no uploads.
+
+`check_account_once` reads the account through the SDK and stores its exact
+response and a check summary. It checks credits, Aleph 2 model availability,
+daily usage, and configured limits against the required credit quote. Missing
+model limits or usage fail closed; explicit null limits mean unlimited.
+Successful bodies must use identity encoding and fit within 1 MiB. A ten-second
+deadline is checked between chunks; a stalled read can take another ten seconds.
+`require_current` rejects blocked checks, checks older than sixty seconds, and
+future-dated checks. Repeat this check before each paid submission, together
+with current pricing and budget approval. This account snapshot authorizes no
+spending and cannot guarantee that a later provider request will succeed.
