@@ -181,6 +181,14 @@ is not playback end. Container duration can include longer audio, so the flag
 does not prove video coverage. This helper creates no images or acceptance
 verdicts and does not bind frames to an attempt; those integration steps remain.
 
+`extract_frame_png` extracts one decoded frame index from already validated MP4
+bytes and matching dimensions and frame count. FFmpeg keeps decoded geometry
+without automatic rotation, scaling, or frame-rate conversion. The helper uses
+private temporary files, then checks that the one output is a fully decodable
+8-bit RGB PNG with the expected dimensions and at most 32 MiB. It returns derived PNG
+bytes; the caller retains the original video and timestamps. Attempt binding,
+immutable review publication, and visual acceptance remain separate steps.
+
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
 then commits both artifact records and local `SUCCEEDED` in one transaction.
