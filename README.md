@@ -128,7 +128,7 @@ HTTP redirects. Its required recorder receives the serialized request body
 before the POST, without authentication headers. Call it only through the
 coordinator after checking the account, pricing, uploaded media, and frozen
 inputs. The offline tests use HTTPX's fake transport and make no paid calls.
-Current-price verification and full submission preflight are still pending.
+Full submission preflight is still pending.
 
 The checked PyPI wheel is `runwayml-5.24.0-py3-none-any.whl`, SHA-256
 `28e67a64ee34b23cb27873b58a912526a48b449d8285a726518a98b2516f0e03`.
@@ -206,3 +206,14 @@ deadline is checked between chunks; a stalled read can take another ten seconds.
 future-dated checks. Repeat this check before each paid submission, together
 with current pricing and budget approval. This account snapshot authorizes no
 spending and cannot guarantee that a later provider request will succeed.
+
+`record_price_quote` records facts checked by a trusted operator: current credits
+per second, minimum credits, USD per credit, and the maximum additional cents
+that can apply. None of these values has a default. The operator must retain
+supporting evidence and supply its verified file record. The evidence hash
+identifies those bytes; it does not verify their origin or the operator's reading.
+The quote uses the greater of the five-second cost and minimum credits, rounds
+fractional USD cents up, then adds all additional cents. Totals above US$10 fail.
+Decimal arithmetic uses its own context. Quotes expire five minutes after the
+recorded price check and never grant spending authority. Current pricing must
+still be checked by the operator before each paid submission.
