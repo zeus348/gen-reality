@@ -179,15 +179,28 @@ reports position within the raw timestamp span separately from the
 declared duration flag. A positive first timestamp is valid; the last timestamp
 is not playback end. Container duration can include longer audio, so the flag
 does not prove video coverage. This helper creates no images or acceptance
-verdicts and does not bind frames to an attempt; those integration steps remain.
+verdicts. The review builder below binds its plan to one verified attempt.
 
 `extract_frame_png` extracts one decoded frame index from already validated MP4
 bytes and matching dimensions and frame count. FFmpeg keeps decoded geometry
 without automatic rotation, scaling, or frame-rate conversion. The helper uses
 private temporary files, then checks that the one output is a fully decodable
 8-bit RGB PNG with the expected dimensions and at most 32 MiB. It returns derived PNG
-bytes; the caller retains the original video and timestamps. Attempt binding,
-immutable review publication, and visual acceptance remain separate steps.
+bytes; the caller retains the original video and timestamps. The review builder
+handles attempt binding and immutable publication; visual acceptance is separate.
+
+`build_review_evidence` verifies one attempt's preparation, saved request check,
+reservation, actual submitted request bytes, completed raw output, metadata, and
+saved provider success response before publishing review samples. Its manifest
+references the original source, normalized five-second sample basis, actual
+provider input and guide, unchanged raw video, and five source/guide/raw PNG
+references. Mode A reuses its static keyframe PNG; Mode B samples its guide clip.
+It records native frame indexes, timestamps, offsets, and duration annotations.
+PNGs keep decoded geometry without applying rotation metadata; these records do
+not verify display orientation or video coverage. Matching repeats verify and
+reuse existing bytes, interrupted publication can resume, and the manifest is
+published last. Expired checks remain readable. Visual and automated workflow
+outcomes stay `NOT_RUN`; the offline fixtures do not establish a live generation.
 
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
