@@ -316,3 +316,54 @@ the command failed. Local success does not establish human visual acceptance.
 The downloader installs a persistent HTTPX logging filter that retains request
 methods, origins, and response status while hiding URL paths and queries. It
 also protects concurrent downloads when SDK INFO logging is enabled.
+
+`publish_review_page` creates a static local page from the artifact reference
+returned by `build_review_evidence`. The page shows the original source, the
+actual submitted guide (a static PNG for Mode A or a video for Mode B), and the
+original raw output. Five saved sample groups use the prepared source at times
+0 through 4 seconds, with frame indexes, presentation times, and raw offsets.
+Downloads retain the original bytes. Browser playback depends on the codec;
+use a local media player if a native file cannot play. No video is converted.
+
+Create the page with the trusted review manifest's path, hash, and size:
+
+```sh
+python -m app.review --output-root runs --run-id RUN_ID --attempt-id ATTEMPT_ID \
+  --review-path attempts/ATTEMPT_ID/review/manifest.json \
+  --review-sha256 REVIEW_SHA256 --review-size REVIEW_SIZE
+```
+
+The command checks the manifest identity and every linked media file before
+publishing `attempts/ATTEMPT_ID/review/index.html`. It needs no credentials or
+ledger and makes no provider calls. It returns the page record as JSON with
+exit code 0, or a safe error with exit code 1. Repeating the same command checks
+and reuses the same page; it never replaces an existing page. Keep the run
+folder private and retain the trusted manifest reference. The page reader does
+not independently establish provider provenance. Browsers do not recheck file
+hashes during playback, so rerun the command if local files might have changed.
+
+To view one attempt, start this local server and open
+`http://127.0.0.1:8765/review/index.html` in a browser. Stop the server with Ctrl-C.
+The directory limit keeps other attempts and the run ledger outside this server.
+
+```sh
+python -m http.server 8765 --bind 127.0.0.1 \
+  --directory runs/RUN_ID/attempts/ATTEMPT_ID
+```
+
+The page has no scripts or remote assets. Human instructions require two full
+normal-speed plays, matched-frame inspection, independent scores, and annotated
+hard failures. Both outcomes remain `NOT_RUN`; the page does not save or sign a
+scorecard. Direct `file://` viewing is not tested because the managed browser
+blocks that scheme. The supported viewing path is the loopback server above.
+
+Optional browser verification uses a local Chromium executable, FFmpeg, and
+separate test dependencies. It builds real Mode A and B manifests with mocked
+provider calls and H.264/yuv420p fixtures, then checks the three native views,
+playback, five sample groups, and requests limited to the local server. This
+checks page behavior; it does not perform the human acceptance review.
+
+```sh
+python -m pip install -r requirements-ui.txt
+GEN_REALITY_BROWSER_BIN=/usr/bin/chromium python -m unittest discover -s tests/ui -v
+```
