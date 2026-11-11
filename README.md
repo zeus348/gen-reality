@@ -222,3 +222,11 @@ fractional USD cents up, then adds all additional cents. Totals above US$10 fail
 Decimal arithmetic uses its own context. Quotes expire five minutes after the
 recorded price check and never grant spending authority. Current pricing must
 still be checked by the operator before each paid submission.
+
+`read_prepared_attempt` verifies the expected run, attempt, manifest, and all nine
+frozen files. It checks attempt paths, hashes, locked configuration, placement,
+prompt, and input declarations. JSON is limited to 64 KiB per file. Mode A
+selects the normalized source and first keyframe; Mode B selects the composited
+guide and omits the keyframe. It retains the declared source kind. This reader
+checks frozen record identity and consistency; media validation and guidance
+compilation remain the preparation writer's responsibility.

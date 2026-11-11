@@ -18,6 +18,7 @@ from PIL import Image
 from app import prepare
 from app.prepare import main, prepare_attempt
 from core.storage import ArtifactExistsError, StorageError, StoredArtifact, read_verified
+from features.inference.prepared import read_prepared_attempt
 from features.placement.math import Placement
 
 
@@ -77,6 +78,11 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual(manifest["releaseClassification"], "LOCAL_PIPELINE_ONLY")
         self.assertFalse(manifest["provider"]["submitted"])
         self.assertIsNone(manifest["provider"]["taskId"])
+        loaded = read_prepared_attempt(root, StoredArtifact(**response["manifest"]),
+                                       run_id="run-1", attempt_id="att-1")
+        self.assertEqual(loaded.media_for_mode("B"),
+                         (StoredArtifact(**manifest["artifacts"]["frozen/guide_B.mp4"]), None))
+        self.assertEqual(loaded.prompt, (root / "attempts/att-1/frozen/prompt.txt").read_text())
         self.assertEqual(len(manifest["artifacts"]), 9)
         for name, record in manifest["artifacts"].items():
             with self.subTest(name=name):
