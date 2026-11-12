@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "attemptId", "normalSpeedPlays", "inspectedSeconds", "scores", "hardFailures", "comment"],
+  "properties": {
+    "schemaVersion": {"const": "1.4"},
+    "runId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "attemptId": {"type": "string", "pattern": "^att-[0-9a-f]{32}$"},
+    "reviewerName": {"type": "string", "maxLength": 200},
+    "reviewedAtUtc": {"type": "string", "maxLength": 40},
+    "signature": {"type": "string", "maxLength": 2000},
+    "normalSpeedPlays": {"type": "integer", "minimum": 2},
+    "inspectedSeconds": {
+      "type": "array", "minItems": 5, "maxItems": 5,
+      "prefixItems": [
+        {"type": "integer", "const": 0},
+        {"type": "integer", "const": 1},
+        {"type": "integer", "const": 2},
+        {"type": "integer", "const": 3},
+        {"type": "integer", "const": 4}
+      ],
+      "items": false
+    },
+    "scores": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identity", "motion", "scene", "placement"],
+      "properties": {
+        "identity": {"$ref": "#/$defs/score"},
+        "motion": {"$ref": "#/$defs/score"},
+        "scene": {"$ref": "#/$defs/score"},
+        "placement": {"$ref": "#/$defs/score"}
+      }
+    },
+    "hardFailures": {"type": "array", "maxItems": 2400, "items": {"$ref": "#/$defs/failure"}},
+    "comment": {"type": "string", "minLength": 1, "maxLength": 4000, "pattern": "\\S"}
+  },
+  "$defs": {
+    "score": {"type": "integer", "minimum": 1, "maximum": 5},
+    "failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "startPTS", "endPTS", "reason", "continuous", "unoccluded"],
+      "properties": {
+        "kind": {"enum": ["duplicate", "missing_limb", "replaced_subject", "teleport_or_slip", "catastrophic"]},
+        "startPTS": {"type": "number", "minimum": 0},
+        "endPTS": {"type": "number", "minimum": 0},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+        "continuous": {"type": "boolean"},
+        "unoccluded": {"type": "boolean"}
+      }
+    }
+  }
+}

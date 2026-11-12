@@ -202,6 +202,28 @@ reuse existing bytes, interrupted publication can resume, and the manifest is
 published last. Expired checks remain readable. Visual and automated workflow
 outcomes stay `NOT_RUN`; the offline fixtures do not establish a live generation.
 
+`assess_scorecard` validates up to 64 KiB of scorecard JSON for the expected run
+and attempt. It requires exactly four integer scores from 1 to 5, at least two
+declared full normal-speed plays, inspected source times `[0,1,2,3,4]`, and a
+written observation. Absent scorecards and otherwise valid drafts without a
+nonblank reviewer name, UTC review time, or signature return `NOT_RUN`. Malformed
+or mismatched data raises `ScorecardError`. Complete declarations get a
+`rubric_verdict`: all four scores must reach 3 and no qualifying failure may remain.
+This result does not authenticate a human, generated clip, or actual viewing;
+it never sets either global outcome. Input verdict and provenance flags are rejected.
+
+Each `hardFailures` entry declares `kind`, numeric `startPTS` and `endPTS`,
+`reason`, `continuous`, and `unoccluded`. Ordinary kinds are `duplicate`,
+`missing_limb`, `replaced_subject`, and `teleport_or_slip`. Report each continuous
+run separately. An unoccluded ordinary run fails at 0.250 seconds; a justified
+`catastrophic` entry fails at any positive duration. Intervals are half-open:
+the end is the next unaffected frame boundary, so six 24 FPS frames span 0.250
+seconds. Same-kind unoccluded intervals must not overlap or touch; positive-gap
+runs are never summed. Decimal arithmetic preserves up to twelve whole and nine
+fractional digits, bounds numeric tokens and exponents, and ignores caller decimal
+settings. The validator does not verify endpoints against native media or infer
+the final video display end. Scorecard storage and evidence binding remain separate.
+
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
 then commits both artifact records and local `SUCCEEDED` in one transaction.
