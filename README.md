@@ -243,6 +243,32 @@ latest-review selection. Review pages and manifests stay unchanged. A binding
 does not authenticate a human or prove live generation; both global outcomes
 remain `NOT_RUN`. This library operation makes no provider calls.
 
+Save an entered scorecard with the trusted review manifest's path, hash, and size:
+
+```sh
+python -m app.scorecard --output-root runs --ledger PRIVATE_LEDGER.sqlite \
+  --run-id RUN_ID --attempt-id ATTEMPT_ID \
+  --review-path attempts/ATTEMPT_ID/review/manifest.json \
+  --review-sha256 REVIEW_SHA256 --review-size REVIEW_SIZE \
+  --scorecard-file entered-scorecard.json
+```
+
+The command requires an existing trusted ledger. It reads a regular scorecard
+file of at most 64 KiB without following symlinks, then validates the complete
+card and expected IDs before opening the coordinator. Enter the reviewer name,
+UTC time, and signature yourself; the command does not fill them in. The original
+bytes are preserved. Opening the coordinator can recover abandoned `SUBMITTING`
+jobs as `SUBMISSION_UNKNOWN`, with their reserves held. It creates no approval,
+reservation, or provider request and needs no API key.
+
+Successful JSON contains `runId`, `attemptId`, and the explicit `binding` artifact
+reference. Exit code 0 means the binding was saved, including a rubric `FAIL`;
+it does not mean visual acceptance. Exit code 1 reports a safe command error.
+Retain each returned binding reference. Repeating the same input returns the same
+record, and a corrected card creates a separate record without replacing the old
+one. `bind_scorecard_file` exposes the same operation to trusted local callers,
+with an injectable clock for tests.
+
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
 then commits both artifact records and local `SUCCEEDED` in one transaction.
