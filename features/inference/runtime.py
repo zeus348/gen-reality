@@ -15,6 +15,7 @@ import httpx
 from core.budget import BudgetLedger
 from core.json_data import unique_fields
 from core.run_start import read_run_start
+from core.runtime_pins import RuntimePin, RuntimePinError, RuntimePinStore
 from core.storage import ArtifactExistsError, StoredArtifact, _parent_directory, publish_bytes, read_verified
 from features.inference.runway import API_URL, SDK_VERSION
 from features.inference.submission import SubmissionCoordinator
@@ -58,7 +59,8 @@ class RuntimeEvidence:
     in a separate operator-owned record if QA must detect altered receipt files.
     """
 
-    def __init__(self, output_root: Path, run_id: str, attempt_id: str, *, clock=time.time):
+    def __init__(self, output_root: Path, run_id: str, attempt_id: str, *, clock=time.time,
+                 pin_store: RuntimePinStore | None = None):
         BudgetLedger._run_id(run_id)
         BudgetLedger._attempt_id(attempt_id)
         self.output_root = Path(output_root).absolute()
@@ -66,6 +68,11 @@ class RuntimeEvidence:
         self.root = self.output_root / run_id
         self.prefix = f"attempts/{attempt_id}/runtime/"
         self.clock = clock
+        if pin_store is not None:
+            if type(pin_store) is not RuntimePinStore:
+                raise RuntimeEvidenceError("Runtime pins need the fixed private store.")
+            pin_store.require_owner(self.output_root, Path(pin_store._owner.ledger_path), run_id)
+        self.pin_store = pin_store
         self._records = []
         self._issues = []
         self._owner = None
@@ -97,6 +104,10 @@ class RuntimeEvidence:
     def require_evidence_root(self, evidence_root: Path):
         if Path(evidence_root).absolute() != self.root:
             raise RuntimeEvidenceError("Runtime recorder belongs to another evidence root.")
+
+    def require_ledger(self, ledger_path: Path):
+        if self.pin_store is not None:
+            self.pin_store.require_owner(self.output_root, ledger_path, self.run_id)
 
     def _issue(self, code):
         if code not in self._issues:
@@ -131,20 +142,48 @@ class RuntimeEvidence:
             self._records.append(record)
         return record
 
+    def _pin(self, record, data):
+        return RuntimePin(self.attempt_id, self._payload, data.get("providerTaskId"),
+                          data["manifestType"], record)
+
+    def _restore_pin(self, record, data):
+        """Only compare old evidence. A new GET cannot backfill creation pins."""
+        if self.pin_store is None:
+            return
+        try:
+            if not self.pin_store.matches(self._pin(record, data)):
+                self._issue("PIN_MISSING")
+        except Exception:
+            self._issue("PIN_MISMATCH")
+
     def _publish(self, name, data):
         contents = (json.dumps(data, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
         if len(contents) > MAX_RECEIPT_BYTES:
             raise RuntimeEvidenceError("Runtime receipt exceeds its byte limit.")
         path = self.prefix + name
         expected = StoredArtifact(path, sha256(contents).hexdigest(), len(contents))
+        fresh = True
         try:
             record = publish_bytes(self.root, path, contents)
         except ArtifactExistsError:
             read_verified(self.root, expected)
             record = expected
+            fresh = False
+        if self.pin_store is not None:
+            try:
+                pin = self._pin(record, data)
+                if fresh:
+                    self.pin_store.pin(pin)
+                elif not self.pin_store.matches(pin):
+                    self._issue("PIN_MISSING")
+                    raise RuntimePinError("An existing receipt has no retained runtime pin.")
+            except Exception:
+                self._issue("PIN_RECORDING_FAILED")
+                raise
         return self._keep(record)
 
     def _bind(self, owner):
+        self.require_ledger(owner.ledger.path)
         owner._require_open()
         with owner.ledger._connection() as connection:
             row = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (self.attempt_id,)).fetchone()
@@ -303,6 +342,7 @@ class RuntimeEvidence:
             if request != checked.frozen.request_body or frozen != checked.frozen.record_bytes:
                 raise RuntimeEvidenceError("Runtime saved request differs.")
             self._event(data["claimEventId"], "CLAIMED")
+            self._restore_pin(record, data)
             self._context, self._context_data = self._keep(record), data
         except FileNotFoundError:
             self._issue("CREATE_CONTEXT_MISSING")
@@ -329,6 +369,7 @@ class RuntimeEvidence:
                 raise RuntimeEvidenceError("Runtime result state is invalid.")
             if data["sendGateEventId"] is not None:
                 self._event(data["sendGateEventId"], "SEND_GATE_PASSED")
+            self._restore_pin(record, data)
             self._result = self._keep(record)
         except FileNotFoundError:
             self._issue("CREATE_RESULT_MISSING")

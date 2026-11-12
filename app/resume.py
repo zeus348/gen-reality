@@ -12,6 +12,7 @@ import time
 import httpx
 
 from core.budget import BudgetError, BudgetLedger
+from core.runtime_pins import RuntimePinStore
 from features.inference.retrieve import retrieve_task_once
 from features.inference.runtime import RuntimeEvidence
 from features.inference.submission import SubmissionCoordinator, SubmissionError
@@ -47,6 +48,7 @@ def resume_attempt(output_root: Path, ledger_path: Path, *, run_id: str, attempt
     BudgetLedger._attempt_id(attempt_id)
     if runtime is not None:
         runtime.require_identity(output_root, run_id, attempt_id)
+        runtime.require_ledger(ledger_path)
     if not Path(ledger_path).is_file():
         raise BudgetError("Resume requires an existing budget database.")
     ledger = BudgetLedger(ledger_path, clock=clock)
@@ -98,9 +100,15 @@ def main(argv=None) -> int:
     parser.add_argument("--output-host", action="append", default=[],
                         help="Exact trusted output host; repeat for each approved host.")
     parser.add_argument("--status-only", action="store_true", help="Inspect local state without provider calls.")
+    parser.add_argument("--trusted-runtime-index", type=Path,
+                        help="Private receipt index outside the output root; retain it separately.")
     arguments = parser.parse_args(argv)
     try:
-        runtime = RuntimeEvidence(arguments.output_root, arguments.run_id, arguments.attempt_id)
+        pins = (RuntimePinStore(arguments.trusted_runtime_index, output_root=arguments.output_root,
+                               ledger_path=arguments.ledger, run_id=arguments.run_id)
+                if arguments.trusted_runtime_index is not None else None)
+        runtime = RuntimeEvidence(arguments.output_root, arguments.run_id, arguments.attempt_id,
+                                  pin_store=pins)
         result = resume_attempt(arguments.output_root, arguments.ledger, run_id=arguments.run_id,
             attempt_id=arguments.attempt_id, api_key_env=arguments.api_key_env,
             output_hosts=frozenset(arguments.output_host), status_only=arguments.status_only, runtime=runtime)

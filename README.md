@@ -660,6 +660,27 @@ headers, signed output URLs, and acceptance claims. Their 16 KiB limit does not
 bound the SDK's pre-existing eager read of non-success HTTP response bodies;
 that remains an owner follow-up.
 
+Use `--trusted-runtime-index /private/operator/run-pins.sqlite` with submit and
+resume to retain fresh receipt pins outside `--output-root`. Its existing parent
+must be private to the current operator. One index belongs to one run, output
+root, and ledger; it cannot be a ledger or an exported file. The fixed SQLite
+files and their sidecars must not share names or file identities with ledger files.
+The index uses DELETE journals, 4096-byte pages, a 16 MiB file limit, 10,000 pins,
+bounded reads, and short lock waits. Foreign databases and WAL sidecars are
+rejected. Interrupted initial creation can leave an unusable index; use a new
+private path or trusted repair rather than adopting its contents automatically.
+
+`RuntimePinStore` is optional for trusted service callers. A fresh creation
+context must be pinned before POST when the store is requested. Ordinary pin
+failures after a response preserve the saved task or returned bytes. Restart
+only compares old receipts: missing pins stay missing, and changed receipts
+report `PIN_MISMATCH`. A new GET can pin its own receipt without establishing
+missing creation history. Repeated reads and identical existing artifacts never
+backfill pins. `read_runtime_pins` returns a bounded immutable snapshot without
+schema or row writes. Paths remain private; pins identify retained local bytes,
+not provider authentication or acceptance. Later QA must receive this index from
+trusted operator configuration rather than reconstructing it from an export.
+
 `publish_review_page` creates a static local page from the artifact reference
 returned by `build_review_evidence`. The page shows the original source, the
 actual submitted guide (a static PNG for Mode A or a video for Mode B), and the
