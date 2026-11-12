@@ -12,10 +12,11 @@ from features.inference.preflight import _match_fields, _read_record, read_check
 from features.inference.prepared import read_prepared_attempt
 from features.inference.retrieve import MAX_TASK_RESPONSE_BYTES
 from features.inference.submission import SubmissionCoordinator
-from features.media.ingest import MAX_INPUT_PIXELS, verify_normalized
+from features.media.ingest import verify_normalized
 from features.output.align import plan_review_frames
 from features.output.complete import CompletedOutput, OutputCompleter, _publish_or_verify
 from features.output.extract import _read_png, extract_frame_png
+from features.output.review_contract import ReviewContractError, _check_output_metadata, _check_output_paths
 
 
 class ReviewEvidenceError(ValueError):
@@ -29,19 +30,13 @@ def _verify_expected_bytes(root: Path, path: str, contents: bytes) -> StoredArti
 
 
 def _read_output_metadata(root: Path, completed: CompletedOutput) -> dict:
-    prefix = f"attempts/{completed.attempt_id}/output/"
-    if completed.raw.path != prefix + "raw.mp4" or completed.metadata.path != prefix + "metadata.json":
-        raise ReviewEvidenceError("Completed output paths must belong to the same attempt.")
-    data = _read_record(root, completed.metadata, 128 * 1024)
-    _match_fields(data, {"schemaVersion": "1.4", "manifestType": "validated_raw_output",
-                        "runId": completed.run_id, "attemptId": completed.attempt_id,
-                        "providerTaskId": completed.provider_task_id, "raw": asdict(completed.raw),
-                        "rawContentValidation": "PASS"})
-    width, height = data["width"], data["height"]
-    if (type(width) is not int or type(height) is not int
-            or not 1 <= width <= 4096 or not 1 <= height <= 4096
-            or width * height > MAX_INPUT_PIXELS or type(data["frameSeconds"]) is not list):
-        raise ReviewEvidenceError("Completed output metadata has invalid frame geometry or timestamps.")
+    try:
+        _check_output_paths(completed.raw, completed.metadata, attempt_id=completed.attempt_id)
+        data = _read_record(root, completed.metadata, 128 * 1024)
+        _check_output_metadata(data, completed.raw, completed.metadata, run_id=completed.run_id,
+                               attempt_id=completed.attempt_id, provider_task_id=completed.provider_task_id)
+    except ReviewContractError as error:
+        raise ReviewEvidenceError(str(error)) from None
     return data
 
 

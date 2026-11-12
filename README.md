@@ -340,6 +340,24 @@ record consistency, not media correctness or authenticity. Review, raw metadata,
 selected scorecard, private evidence, full-run audits, and global outcome
 evaluation remain separate.
 
+`verify_export_review` adds review-manifest and raw-metadata consistency checks
+to archive and preparation verification. It retains those two fixed JSON records
+at up to 128 KiB each from the same fully verified snapshot. Review identity,
+mode, declared source kind, task, payload, exact media/sample references, and
+private evidence hash/size references must agree with the inventory. Private
+record bytes stay excluded. The raw metadata must reference the same output and
+task, with bounded geometry, duration, and strictly increasing recorded PTS.
+
+Each raw sample must use its recorded frame PTS and the nearest raw frame to
+the declared source PTS, choosing the earlier frame on a tie. Offset, span, and
+duration labels are checked. Shared pure rules keep filesystem review readers
+consistent. These checks do not decode media or prove that saved timestamps
+describe actual frames. Full source/guide timelines are unavailable and are
+not inferred from frame rate; the final display end is not inferred either.
+The frozen `ExportReviewIntegrity` result contains preparation integrity and the
+review/metadata references. Selected scorecards, private evidence authenticity,
+full-run audits, and global outcome evaluation remain separate.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh
