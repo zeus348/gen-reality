@@ -5,8 +5,6 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
-
 from core.storage import StoredArtifact
 from features.inference.preflight import _match_fields, _read_record, _timestamp, read_checked_request
 from features.inference.prepared import _read_json, read_prepared_attempt
@@ -14,18 +12,7 @@ from features.inference.submission import SubmissionCoordinator
 from features.output.complete import _publish_or_verify, read_completed_output
 from features.output.review import _verify_expected_bytes, _verify_success_response
 from features.review.bind import BoundScorecard, _native_times, _verify_review, read_scorecard_binding
-
-
-MAX_INVENTORY_BYTES = 64 * 1024
-SCHEMA_PATH = Path(__file__).with_name("inventory.schema.json")
-_VALIDATOR = Draft202012Validator(json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
-FROZEN_ROLES = {
-    "frozen/source_original.mp4": "source_original", "frozen/source_original.mov": "source_original",
-    "frozen/source_normalized.mp4": "source_normalized", "frozen/asset_original.png": "asset_original",
-    "frozen/placement.json": "placement", "frozen/config.json": "configuration",
-    "frozen/prompt.txt": "prompt", "frozen/inputs.json": "input_declarations",
-    "frozen/keyframe_A.png": "guide_a", "frozen/guide_B.mp4": "guide_b",
-}
+from features.review.inventory_contract import FROZEN_ROLES, MAX_INVENTORY_BYTES, SCHEMA_PATH, _VALIDATOR
 
 
 class ExportInventoryError(ValueError):
