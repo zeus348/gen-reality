@@ -11,11 +11,10 @@ from pathlib import Path
 from core.storage import StoredArtifact, read_verified
 from features.inference.preflight import _match_fields, _read_record
 from features.inference.submission import SubmissionCoordinator
-from features.output.align import _validate_timeline
 from features.output.complete import CompletedOutput, OutputCompleter, _publish_or_verify, read_completed_output
 from features.output.review import _read_output_metadata, _verify_success_response
-from features.output.validate import MAX_RAW_FRAMES
 from features.output.view import _verify_views
+from features.output.review_contract import ReviewContractError, _check_review_header, _raw_times
 from features.review.score import MAX_SCORECARD_BYTES, ScorecardAssessment, assess_scorecard
 
 
@@ -49,23 +48,20 @@ def _verify_review(root: Path, manifest: StoredArtifact, *, run_id: str, attempt
     if manifest.path != prefix + "review/manifest.json":
         raise ScorecardBindingError("Review manifest must belong to the requested attempt.")
     data = _read_record(root, manifest, 128 * 1024)
-    _match_fields(data, {"schemaVersion": "1.4", "manifestType": "indexed_review_sources",
-                        "runId": run_id, "attemptId": attempt_id, "samplePixelFormat": "8-bit RGB",
-                        "sampleAutomaticRotationApplied": False,
-                        "visualEffectDemonstrated": "NOT_RUN", "automatedWorkflowComplete": "NOT_RUN"})
-    if data["mode"] not in ("A", "B") or data["sourceKind"] not in ("clean_camera", "synthetic_fixture"):
-        raise ScorecardBindingError("Review mode or source kind is invalid.")
+    try:
+        _check_review_header(data, run_id=run_id, attempt_id=attempt_id)
+    except ReviewContractError as error:
+        raise ScorecardBindingError(str(error)) from None
     _verify_views(root, data, prefix)
     return data
 
 
 def _native_times(root: Path, completed: CompletedOutput) -> set[Decimal]:
     metadata = _read_output_metadata(root, completed)
-    duration = metadata["durationSeconds"]
-    if type(duration) not in (int, float) or not math.isfinite(duration) or not 0 < duration <= 20:
-        raise ScorecardBindingError("Raw metadata duration is invalid.")
-    _validate_timeline(tuple(metadata["frameSeconds"]), minimum_count=1,
-                       maximum_count=MAX_RAW_FRAMES, duration_seconds=duration)
+    try:
+        _raw_times(metadata)
+    except ReviewContractError as error:
+        raise ScorecardBindingError(str(error)) from None
     # The saved JSON has already passed its size, hash, identity, and numeric
     # checks. Read its decimal tokens exactly for endpoint membership.
     exact_metadata = json.loads(read_verified(root, completed.metadata), parse_float=Decimal)

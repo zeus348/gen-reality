@@ -14,6 +14,7 @@ from core.budget import BudgetLedger
 from core.json_data import unique_fields
 from core.storage import MAX_ARTIFACT_BYTES, StoredArtifact, read_verified
 from features.inference.preparation_contract import PREPARATION_CONTROL_LIMITS
+from features.output.review_contract import REVIEW_CONTROL_LIMITS
 from features.review.inventory_contract import MAX_INVENTORY_BYTES, _check_inventory
 
 
@@ -147,8 +148,9 @@ def _read_member(archive: ZipFile, member: ZipInfo, record: StoredArtifact, *, r
 
 def _read_verified_archive(output_root: Path, archive_ref: StoredArtifact,
                             inventory_ref: StoredArtifact, *, run_id: str,
-                            attempt_id: str, include_preparation: bool = False) -> _VerifiedArchive:
-    """Verify one snapshot; optionally retain only the fixed preparation controls."""
+                            attempt_id: str, include_preparation: bool = False,
+                            include_review: bool = False) -> _VerifiedArchive:
+    """Verify one snapshot; retain only the requested fixed groups of controls."""
     try:
         BudgetLedger._run_id(run_id)
         BudgetLedger._attempt_id(attempt_id)
@@ -170,11 +172,13 @@ def _read_verified_archive(output_root: Path, archive_ref: StoredArtifact,
             records = _check_inventory(data, run_id=run_id, attempt_id=attempt_id)
             if names != ["inventory.json", *records]:
                 raise ArchiveIntegrityError("ZIP members do not match the selected inventory.")
-            limits = {f"attempts/{attempt_id}/{name}": limit
-                      for name, limit in PREPARATION_CONTROL_LIMITS.items()} if include_preparation else {}
+            control_limits = dict(PREPARATION_CONTROL_LIMITS) if include_preparation or include_review else {}
+            if include_review:
+                control_limits.update(REVIEW_CONTROL_LIMITS)
+            limits = {f"attempts/{attempt_id}/{name}": limit for name, limit in control_limits.items()}
             for path, limit in limits.items():
                 if records[path].size > limit:
-                    raise ArchiveIntegrityError("Preparation control exceeds its retained byte limit.")
+                    raise ArchiveIntegrityError("Archive control exceeds its retained byte limit.")
             controls = {}
             for member in members[1:]:
                 member_bytes = _read_member(archive, member, records[member.filename], retain=member.filename in limits)

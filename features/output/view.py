@@ -3,7 +3,6 @@
 import base64
 from hashlib import sha256
 from html import escape
-import math
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
@@ -11,6 +10,7 @@ from core.budget import BudgetLedger
 from core.storage import StoredArtifact, read_verified
 from features.inference.preflight import _match_fields, _read_record
 from features.output.complete import _publish_or_verify
+from features.output.review_contract import ReviewContractError, _number, _index, _view_records
 
 
 class ReviewPageError(ValueError):
@@ -34,75 +34,14 @@ figcaption { margin-top: 8px; overflow-wrap: anywhere; }
 """
 
 
-def _number(value, minimum: float, maximum: float) -> float:
-    if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= maximum:
-        raise ReviewPageError("Review timing is invalid.")
-    return value
-
-
-def _index(value, maximum: int) -> int:
-    if type(value) is not int or not 0 <= value <= maximum:
-        raise ReviewPageError("Review frame index is invalid.")
-    return value
-
-
 def _verify_views(root: Path, data: dict, prefix: str) -> None:
     """Check every linked media file before the page is published."""
-    verified = {}
-
-    def check(record_data, paths, limit=256 * 1024 * 1024):
-        record = StoredArtifact(**record_data)
-        if record.path not in paths or type(record.size) is not int or not 0 < record.size <= limit:
-            raise ReviewPageError("Review media does not match its expected path or size.")
-        if record.path in verified:
-            if verified[record.path] != record:
-                raise ReviewPageError("Review media has conflicting file records.")
-        else:
-            read_verified(root, record)
-            verified[record.path] = record
-
-    mode = data["mode"]
-    check(data["sourceOriginal"], {prefix + "frozen/source_original.mp4", prefix + "frozen/source_original.mov"})
-    check(data["sourceNormalized"], {prefix + "frozen/source_normalized.mp4"})
-    check(data["rawOutput"], {prefix + "output/raw.mp4"})
-    guide = data["guide"]
-    guide_kind = "static_keyframe" if mode == "A" else "video"
-    if guide["kind"] != guide_kind:
-        raise ReviewPageError("Review guide does not match its mode.")
-    guide_name = "keyframe_A.png" if mode == "A" else "guide_B.mp4"
-    check(guide["artifact"], {prefix + "frozen/" + guide_name},
-          32 * 1024 * 1024 if mode == "A" else 256 * 1024 * 1024)
-    _match_fields(data, {"providerVideoInput": data["sourceNormalized"] if mode == "A" else guide["artifact"]})
-    samples = data["samples"]
-    if type(samples) is not list or len(samples) != 5:
-        raise ReviewPageError("Review needs five ordered samples.")
-    for second, sample in enumerate(samples):
-        if _number(sample["requestedSeconds"], 0, 4) != second:
-            raise ReviewPageError("Review samples must use source times zero through four.")
-        source, raw, guide_sample = sample["source"], sample["raw"], sample["guide"]
-        source_index = _index(source["frameIndex"], 119)
-        raw_index = _index(raw["frameIndex"], 2399)
-        source_time = _number(source["ptsSeconds"], -0.00001, 5)
-        raw_time = _number(raw["ptsSeconds"], 0, 20)
-        offset = _number(raw["offsetSeconds"], -21, 21)
-        if not math.isclose(offset, raw_time - source_time, rel_tol=0, abs_tol=1e-9):
-            raise ReviewPageError("Raw offset does not match the saved timestamps.")
-        if (raw["spanPosition"] not in ("before_first", "within_span", "after_last")
-                or type(raw["withinDeclaredDuration"]) is not bool):
-            raise ReviewPageError("Raw timing labels are invalid.")
-        check(source["image"], {prefix + f"review/source/frame-{source_index:06d}.png"}, 32 * 1024 * 1024)
-        check(raw["image"], {prefix + f"review/raw/frame-{raw_index:06d}.png"}, 32 * 1024 * 1024)
-        if mode == "A":
-            if (guide_sample["kind"] != "static_keyframe"
-                    or _number(guide_sample["referenceSeconds"], 0, 0) != 0):
-                raise ReviewPageError("Mode A samples must use the submitted static keyframe.")
-            _match_fields(guide_sample, {"image": guide["artifact"]})
-        else:
-            if (guide_sample["kind"] != "video_frame"
-                    or _index(guide_sample["frameIndex"], 119) != source_index):
-                raise ReviewPageError("Mode B samples must use the matched guide frames.")
-            _number(guide_sample["ptsSeconds"], -0.00001, 5)
-            check(guide_sample["image"], {prefix + f"review/guide/frame-{source_index:06d}.png"}, 32 * 1024 * 1024)
+    try:
+        records = _view_records(data, prefix)
+    except ReviewContractError as error:
+        raise ReviewPageError(str(error)) from None
+    for record in records.values():
+        read_verified(root, record)
 
 
 def _url(record: dict, prefix: str) -> str:
