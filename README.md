@@ -617,6 +617,28 @@ The downloader installs a persistent HTTPX logging filter that retains request
 methods, origins, and response status while hiding URL paths and queries. It
 also protects concurrent downloads when SDK INFO logging is enabled.
 
+Both commands add a `runtime` summary with immutable receipt references and
+explicit evidence gaps. Trusted service callers can pass `RuntimeEvidence`;
+service return types stay unchanged. The recorder saves checked creation inputs
+before the final send gate and a download intent before the GET. Failure to save
+either prerequisite blocks that operation. Ordinary failures to save later
+observations preserve the known task or returned bytes. Failed observation
+clocks produce null times; interruptions still propagate.
+
+Receipts link the saved request, local submission events, a separate SDK task
+GET, and the exact returned download bytes. Response-hook time means local
+response availability; body-finish time means the bounded read loop completed.
+Neither is a provider receipt time. Restart reads fixed creation records and
+reports missing legacy links. Each GET or download retry has distinct receipts.
+`DEFAULT_NETWORK` describes the actual selected default HTTPX transport;
+`INJECTED` marks supplied or replaced transports. Neither proves provider
+authentication or a real generation. Retain selected receipt references outside
+the run/export tree in trusted operator configuration for later QA. Do not
+reconstruct that trust record from exported receipt files. Receipts omit keys,
+headers, signed output URLs, and acceptance claims. Their 16 KiB limit does not
+bound the SDK's pre-existing eager read of non-success HTTP response bodies;
+that remains an owner follow-up.
+
 `publish_review_page` creates a static local page from the artifact reference
 returned by `build_review_evidence`. The page shows the original source, the
 actual submitted guide (a static PNG for Mode A or a video for Mode B), and the

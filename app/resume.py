@@ -13,6 +13,7 @@ import httpx
 
 from core.budget import BudgetError, BudgetLedger
 from features.inference.retrieve import retrieve_task_once
+from features.inference.runtime import RuntimeEvidence
 from features.inference.submission import SubmissionCoordinator, SubmissionError
 from features.output.complete import CompletedOutput, OutputCompleter, OutputError
 from features.output.fetch import download_task_output
@@ -33,7 +34,8 @@ def resume_attempt(output_root: Path, ledger_path: Path, *, run_id: str, attempt
                    output_hosts: frozenset[str], api_key_env: str = "RUNWAY_API_KEY",
                    status_only: bool = False, clock=time.time,
                    task_transport: httpx.BaseTransport | None = None,
-                   output_transport: httpx.BaseTransport | None = None) -> ResumeResult:
+                   output_transport: httpx.BaseTransport | None = None,
+                   runtime: RuntimeEvidence | None = None) -> ResumeResult:
     """Poll a known task once, then validate and save its output after success.
 
     The trusted operator supplies exact output hosts. A fresh task GET can
@@ -43,6 +45,8 @@ def resume_attempt(output_root: Path, ledger_path: Path, *, run_id: str, attempt
     """
     BudgetLedger._run_id(run_id)
     BudgetLedger._attempt_id(attempt_id)
+    if runtime is not None:
+        runtime.require_identity(output_root, run_id, attempt_id)
     if not Path(ledger_path).is_file():
         raise BudgetError("Resume requires an existing budget database.")
     ledger = BudgetLedger(ledger_path, clock=clock)
@@ -64,6 +68,8 @@ def resume_attempt(output_root: Path, ledger_path: Path, *, run_id: str, attempt
                                 observed.provider_status, observed.poll_status, output)
 
         current = snapshot()
+        if runtime is not None:
+            runtime.bind_existing(coordinator)
         if status_only or current.state not in ("QUEUED", "RUNNING"):
             return current
         if type(api_key_env) is not str or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", api_key_env) is None:
@@ -73,10 +79,12 @@ def resume_attempt(output_root: Path, ledger_path: Path, *, run_id: str, attempt
             raise ValueError("The named environment variable must contain a Runway API key.")
         evidence_root = Path(output_root) / run_id
         observed = poller.poll_once(attempt_id, lambda task_id: retrieve_task_once(
-            task_id, api_key, evidence_root, transport=task_transport), deadline_unix=ledger._now() + 10)
+            task_id, api_key, evidence_root, transport=task_transport, runtime=runtime),
+            deadline_unix=ledger._now() + 10)
         if observed.provider_status == "SUCCEEDED" and observed.poll_status == "OBSERVED":
             completer.complete(attempt_id, lambda task_id, evidence_hash: download_task_output(
-                task_id, evidence_hash, evidence_root, allowed_hosts=output_hosts, transport=output_transport))
+                task_id, evidence_hash, evidence_root, allowed_hosts=output_hosts,
+                transport=output_transport, runtime=runtime))
         return snapshot()
 
 
@@ -92,14 +100,15 @@ def main(argv=None) -> int:
     parser.add_argument("--status-only", action="store_true", help="Inspect local state without provider calls.")
     arguments = parser.parse_args(argv)
     try:
+        runtime = RuntimeEvidence(arguments.output_root, arguments.run_id, arguments.attempt_id)
         result = resume_attempt(arguments.output_root, arguments.ledger, run_id=arguments.run_id,
             attempt_id=arguments.attempt_id, api_key_env=arguments.api_key_env,
-            output_hosts=frozenset(arguments.output_host), status_only=arguments.status_only)
+            output_hosts=frozenset(arguments.output_host), status_only=arguments.status_only, runtime=runtime)
     except Exception:
         print("Resume could not proceed. Check the saved attempt, credentials, and trusted output hosts.",
               file=sys.stderr)
         return 1
-    print(json.dumps(asdict(result), sort_keys=True))
+    print(json.dumps(asdict(result) | {"runtime": runtime.summary()}, sort_keys=True))
     return 0 if arguments.status_only or result.state == "SUCCEEDED" else 2
 
 

@@ -68,13 +68,20 @@ class RunwayCreateAdapter:
     """
 
     def __init__(self, api_key: str, *, record_request: Callable[[bytes], None],
-                 transport: httpx.BaseTransport | None = None):
+                 transport: httpx.BaseTransport | None = None,
+                 check_response: Callable[[httpx.Response], None] | None = None):
         if not callable(record_request):
             raise ProviderError("Task creation needs a request recorder.")
-        self._client = make_sdk_client(api_key, record_request=record_request, transport=transport)
+        self._client = make_sdk_client(api_key, record_request=record_request, transport=transport,
+                                      check_response=check_response)
 
     def close(self):
         self._client.close()
+
+    @property
+    def http_client(self):
+        """Expose the constructed client for local transport observations."""
+        return self._client._client
 
     def __enter__(self):
         return self
