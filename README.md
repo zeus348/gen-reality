@@ -358,6 +358,21 @@ The frozen `ExportReviewIntegrity` result contains preparation integrity and the
 review/metadata references. Selected scorecards, private evidence authenticity,
 full-run audits, and global outcome evaluation remain separate.
 
+`verify_export_scorecard` completes the selected scorecard and binding checks
+within that same fully verified archive snapshot. Only the explicitly selected
+card and binding are retained, each at up to 64 KiB. The frozen result reports
+`NOT_SELECTED` with no card, binding, or assessment when the inventory selects
+none. It does not choose another review automatically.
+
+For a selected card, the original bytes and references must match. Shared pure
+binding rules require complete declared sign-off, recompute the rubric, require
+failure endpoints to equal exact saved native PTS, and require review time at or
+after recorded completion. The entire binding must equal the reconstructed
+canonical receipt bytes. A complete rubric `FAIL` is valid consistent evidence.
+Historical verification uses no current-clock upper bound. These checks do not
+authenticate a human, actual viewing, provider execution, or decoded media, and
+they do not establish a global outcome or release verdict.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh

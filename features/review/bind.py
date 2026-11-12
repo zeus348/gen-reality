@@ -1,11 +1,8 @@
 """Bind declared human review data to one saved, completed attempt."""
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from decimal import Context, Decimal, ROUND_HALF_EVEN
+from decimal import Decimal
 from hashlib import sha256
-import json
-import math
 from pathlib import Path
 
 from core.storage import StoredArtifact, read_verified
@@ -16,6 +13,9 @@ from features.output.review import _read_output_metadata, _verify_success_respon
 from features.output.view import _verify_views
 from features.output.review_contract import ReviewContractError, _check_review_header, _raw_times
 from features.review.score import MAX_SCORECARD_BYTES, ScorecardAssessment, assess_scorecard
+from features.review.binding_contract import (
+    BindingContractError, _assess_bound_card, _exact_native_times, _make_receipt, _receipt_bytes, _utc_seconds,
+)
 
 
 class ScorecardBindingError(ValueError):
@@ -30,17 +30,6 @@ class BoundScorecard:
     scorecard: StoredArtifact
     review_manifest: StoredArtifact
     assessment: ScorecardAssessment
-
-
-def _utc_seconds(value: str) -> Decimal:
-    """Convert already-validated UTC text without float rounding or arithmetic context."""
-    reviewed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    elapsed = reviewed - datetime(1970, 1, 1, tzinfo=timezone.utc)
-    whole_seconds = elapsed.days * 86400 + elapsed.seconds
-    microseconds = whole_seconds * 1000000 + elapsed.microseconds
-    context = Context(prec=32, rounding=ROUND_HALF_EVEN, Emin=-99, Emax=99,
-                      capitals=1, clamp=0, flags=[], traps=[])
-    return Decimal(microseconds).scaleb(-6, context=context)
 
 
 def _verify_review(root: Path, manifest: StoredArtifact, *, run_id: str, attempt_id: str) -> dict:
@@ -64,18 +53,17 @@ def _native_times(root: Path, completed: CompletedOutput) -> set[Decimal]:
         raise ScorecardBindingError(str(error)) from None
     # The saved JSON has already passed its size, hash, identity, and numeric
     # checks. Read its decimal tokens exactly for endpoint membership.
-    exact_metadata = json.loads(read_verified(root, completed.metadata), parse_float=Decimal)
-    return {Decimal(value) for value in exact_metadata["frameSeconds"]}
+    return _exact_native_times(read_verified(root, completed.metadata))
 
 
 def _binding_receipt(root: Path, review_manifest: StoredArtifact, contents: bytes,
                      completed: CompletedOutput | None, *, run_id: str,
                      attempt_id: str) -> tuple[dict, ScorecardAssessment]:
     """Verify evidence and construct the receipt without a clock, ledger, or writes."""
-    assessment = assess_scorecard(contents, run_id=run_id, attempt_id=attempt_id)
-    if assessment.rubric_verdict == "NOT_RUN":
-        raise ScorecardBindingError("A complete reviewer name, UTC time, and signature are required.")
-    card = json.loads(contents, parse_float=Decimal)
+    try:
+        assessed = _assess_bound_card(contents, run_id=run_id, attempt_id=attempt_id)
+    except BindingContractError as error:
+        raise ScorecardBindingError(str(error)) from None
     data = _verify_review(root, review_manifest, run_id=run_id, attempt_id=attempt_id)
     if completed is None or completed.run_id != run_id or completed.attempt_id != attempt_id:
         raise ScorecardBindingError("Review requires completed output for this run and attempt.")
@@ -84,33 +72,12 @@ def _binding_receipt(root: Path, review_manifest: StoredArtifact, contents: byte
                         "rawOutput": asdict(completed.raw), "rawMetadata": asdict(completed.metadata),
                         "providerSuccess": asdict(success)})
     native_times = _native_times(root, completed)
-    for failure in card["hardFailures"]:
-        if failure["startPTS"] not in native_times or failure["endPTS"] not in native_times:
-            raise ScorecardBindingError("Failure endpoints must equal saved native frame timestamps.")
-    completed_at = completed.completed_unix
-    if (type(completed_at) not in (int, float) or not math.isfinite(completed_at)
-            or not 0 <= completed_at <= 253402300799):
-        raise ScorecardBindingError("Completion time is invalid.")
-    if _utc_seconds(card["reviewedAtUtc"]) < Decimal(str(completed_at)):
-        raise ScorecardBindingError("Review time must be at or after output completion.")
-    card_record = StoredArtifact(f"attempts/{attempt_id}/review/scorecards/{sha256(contents).hexdigest()}.json",
-                                 sha256(contents).hexdigest(), len(contents))
-    receipt = {
-        "schemaVersion": "1.4", "manifestType": "bound_review_scorecard",
-        "runId": run_id, "attemptId": attempt_id, "mode": data["mode"],
-        "providerTaskId": completed.provider_task_id, "reviewManifest": asdict(review_manifest),
-        "scorecard": asdict(card_record), "rawOutput": asdict(completed.raw),
-        "rawMetadata": asdict(completed.metadata), "providerSuccess": asdict(success),
-        "completedUnix": completed_at, "reviewedAtUtc": card["reviewedAtUtc"],
-        "rubricVerdict": assessment.rubric_verdict,
-        "qualifyingFailureIndexes": list(assessment.qualifying_failure_indexes),
-        "visualEffectDemonstrated": "NOT_RUN", "automatedWorkflowComplete": "NOT_RUN",
-    }
-    return receipt, assessment
-
-
-def _receipt_bytes(receipt: dict) -> bytes:
-    return (json.dumps(receipt, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    try:
+        receipt = _make_receipt(assessed, review_manifest, data, native_times=native_times,
+                                completed_unix=completed.completed_unix)
+    except BindingContractError as error:
+        raise ScorecardBindingError(str(error)) from None
+    return receipt, assessed.assessment
 
 
 def read_scorecard_binding(coordinator: SubmissionCoordinator, output_root: Path,

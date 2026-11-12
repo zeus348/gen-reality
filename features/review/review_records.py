@@ -64,6 +64,34 @@ def _check_raw_samples(review: dict, metadata: dict) -> None:
         # The shared view checks already verify offset = raw PTS - source PTS.
 
 
+def _check_review_snapshot(snapshot, *, run_id: str, attempt_id: str) -> ExportReviewIntegrity:
+    """Check review semantics after the complete archive snapshot is verified."""
+    preparation = _check_preparation_snapshot(snapshot, run_id=run_id, attempt_id=attempt_id)
+    inventory = snapshot.inventory
+    prefix = f"attempts/{attempt_id}/"
+    review_ref = StoredArtifact(**inventory["selection"]["reviewManifest"])
+    metadata_ref = snapshot.records[prefix + "output/metadata.json"]
+    raw_ref = snapshot.records[prefix + "output/raw.mp4"]
+    review = _parse_review_json(snapshot.controls[review_ref.path])
+    metadata = _parse_review_json(snapshot.controls[metadata_ref.path])
+    _check_review_header(review, run_id=run_id, attempt_id=attempt_id)
+    _match_fields(review, {"mode": inventory["mode"], "sourceKind": preparation.source_kind,
+                          "preparation": asdict(preparation.preparation),
+                          "providerTaskId": inventory["provider"]["taskId"],
+                          "payloadSha256": inventory["provider"]["payloadSha256"],
+                          "rawOutput": asdict(raw_ref), "rawMetadata": asdict(metadata_ref)})
+    _check_private_references(review, inventory, prefix)
+    views = _view_records(review, prefix)
+    expected_paths = {entry["path"] for entry in inventory["files"] if VIEW_ROLES.intersection(entry["roles"])}
+    if set(views) != expected_paths or any(record != snapshot.records[path] for path, record in views.items()):
+        raise ExportReviewError("Review media and samples differ from the inventory.")
+    _check_output_metadata(metadata, raw_ref, metadata_ref, run_id=run_id,
+                           attempt_id=attempt_id, provider_task_id=inventory["provider"]["taskId"])
+    _match_fields(metadata, {"visualEffectDemonstrated": "NOT_RUN", "automatedWorkflowComplete": "NOT_RUN"})
+    _check_raw_samples(review, metadata)
+    return ExportReviewIntegrity(preparation, review_ref, metadata_ref)
+
+
 def verify_export_review(output_root: Path, archive_ref: StoredArtifact,
                          inventory_ref: StoredArtifact, *, run_id: str,
                          attempt_id: str) -> ExportReviewIntegrity:
@@ -81,29 +109,6 @@ def verify_export_review(output_root: Path, archive_ref: StoredArtifact,
     try:
         snapshot = _read_verified_archive(output_root, archive_ref, inventory_ref,
             run_id=run_id, attempt_id=attempt_id, include_review=True)
-        preparation = _check_preparation_snapshot(snapshot, run_id=run_id, attempt_id=attempt_id)
-        inventory = snapshot.inventory
-        prefix = f"attempts/{attempt_id}/"
-        review_ref = StoredArtifact(**inventory["selection"]["reviewManifest"])
-        metadata_ref = snapshot.records[prefix + "output/metadata.json"]
-        raw_ref = snapshot.records[prefix + "output/raw.mp4"]
-        review = _parse_review_json(snapshot.controls[review_ref.path])
-        metadata = _parse_review_json(snapshot.controls[metadata_ref.path])
-        _check_review_header(review, run_id=run_id, attempt_id=attempt_id)
-        _match_fields(review, {"mode": inventory["mode"], "sourceKind": preparation.source_kind,
-                              "preparation": asdict(preparation.preparation),
-                              "providerTaskId": inventory["provider"]["taskId"],
-                              "payloadSha256": inventory["provider"]["payloadSha256"],
-                              "rawOutput": asdict(raw_ref), "rawMetadata": asdict(metadata_ref)})
-        _check_private_references(review, inventory, prefix)
-        views = _view_records(review, prefix)
-        expected_paths = {entry["path"] for entry in inventory["files"] if VIEW_ROLES.intersection(entry["roles"])}
-        if set(views) != expected_paths or any(record != snapshot.records[path] for path, record in views.items()):
-            raise ExportReviewError("Review media and samples differ from the inventory.")
-        _check_output_metadata(metadata, raw_ref, metadata_ref, run_id=run_id,
-                               attempt_id=attempt_id, provider_task_id=inventory["provider"]["taskId"])
-        _match_fields(metadata, {"visualEffectDemonstrated": "NOT_RUN", "automatedWorkflowComplete": "NOT_RUN"})
-        _check_raw_samples(review, metadata)
-        return ExportReviewIntegrity(preparation, review_ref, metadata_ref)
+        return _check_review_snapshot(snapshot, run_id=run_id, attempt_id=attempt_id)
     except Exception:
         raise ExportReviewError("Archived review records could not be verified for this attempt.") from None
