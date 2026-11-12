@@ -222,7 +222,26 @@ seconds. Same-kind unoccluded intervals must not overlap or touch; positive-gap
 runs are never summed. Decimal arithmetic preserves up to twelve whole and nine
 fractional digits, bounds numeric tokens and exponents, and ignores caller decimal
 settings. The validator does not verify endpoints against native media or infer
-the final video display end. Scorecard storage and evidence binding remain separate.
+the final video display end. Storage and evidence binding are separate operations.
+
+`bind_scorecard` accepts an existing open coordinator, output root, trusted review
+manifest reference, original scorecard bytes, and expected run and attempt IDs.
+It verifies the displayed files and current completed task, raw output, metadata,
+and saved provider success response before it publishes anything. A complete
+reviewer name, UTC time, and signature are required. Review time must be at or
+after completion and at or before the ledger's trusted current time. Each failure
+endpoint must exactly equal a saved native frame timestamp. The final display
+end is unavailable unless separately established; container duration and FPS do
+not supply it.
+
+The original card is saved at `review/scorecards/{SHA256}.json` within the attempt.
+Its receipt is published last at `review/scorecard-bindings/{SHA256}.json` and binds
+the card, review manifest, completed output, metadata, task, and declared rubric
+result. Retain the returned receipt reference to select that review. Exact retries
+reuse the records; corrected cards preserve earlier records. There is no automatic
+latest-review selection. Review pages and manifests stay unchanged. A binding
+does not authenticate a human or prove live generation; both global outcomes
+remain `NOT_RUN`. This library operation makes no provider calls.
 
 `OutputCompleter` accepts a trusted GET-only download callback after a recorded
 provider success. It validates the entire MP4, publishes raw bytes and metadata,
