@@ -15,6 +15,7 @@ from core.json_data import unique_fields
 from core.storage import MAX_ARTIFACT_BYTES, StoredArtifact, read_verified
 from features.inference.preparation_contract import PREPARATION_CONTROL_LIMITS
 from features.output.review_contract import REVIEW_CONTROL_LIMITS
+from features.review.binding_contract import MAX_BINDING_BYTES, MAX_SCORECARD_BYTES
 from features.review.inventory_contract import MAX_INVENTORY_BYTES, _check_inventory
 
 
@@ -149,7 +150,7 @@ def _read_member(archive: ZipFile, member: ZipInfo, record: StoredArtifact, *, r
 def _read_verified_archive(output_root: Path, archive_ref: StoredArtifact,
                             inventory_ref: StoredArtifact, *, run_id: str,
                             attempt_id: str, include_preparation: bool = False,
-                            include_review: bool = False) -> _VerifiedArchive:
+                            include_review: bool = False, include_scorecard: bool = False) -> _VerifiedArchive:
     """Verify one snapshot; retain only the requested fixed groups of controls."""
     try:
         BudgetLedger._run_id(run_id)
@@ -172,10 +173,17 @@ def _read_verified_archive(output_root: Path, archive_ref: StoredArtifact,
             records = _check_inventory(data, run_id=run_id, attempt_id=attempt_id)
             if names != ["inventory.json", *records]:
                 raise ArchiveIntegrityError("ZIP members do not match the selected inventory.")
-            control_limits = dict(PREPARATION_CONTROL_LIMITS) if include_preparation or include_review else {}
-            if include_review:
+            control_limits = {}
+            if include_preparation or include_review or include_scorecard:
+                control_limits.update(PREPARATION_CONTROL_LIMITS)
+            if include_review or include_scorecard:
                 control_limits.update(REVIEW_CONTROL_LIMITS)
             limits = {f"attempts/{attempt_id}/{name}": limit for name, limit in control_limits.items()}
+            if include_scorecard:
+                for name, limit in (("scorecardBinding", MAX_BINDING_BYTES), ("scorecard", MAX_SCORECARD_BYTES)):
+                    selected = data["selection"][name]
+                    if selected is not None:
+                        limits[selected["path"]] = limit
             for path, limit in limits.items():
                 if records[path].size > limit:
                     raise ArchiveIntegrityError("Archive control exceeds its retained byte limit.")
