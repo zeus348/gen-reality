@@ -12,6 +12,7 @@ import time
 import httpx
 
 from core import run_start
+from core.runtime_pins import RuntimePinStore
 from core.budget import BudgetError, BudgetLedger, IdempotencyConflict
 from core.storage import StoredArtifact
 from features.inference.preflight import read_checked_request
@@ -35,6 +36,7 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
     BudgetLedger._attempt_id(attempt_id)
     if runtime is not None:
         runtime.require_identity(output_root, run_id, attempt_id)
+        runtime.require_ledger(ledger_path)
     if type(api_key_env) is not str or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", api_key_env) is None:
         raise ValueError("Supply an environment variable name for the API key.")
     checked = read_checked_request(Path(output_root) / run_id, evidence,
@@ -82,9 +84,15 @@ def main(argv=None) -> int:
     parser.add_argument("--check-sha256", required=True)
     parser.add_argument("--check-size", type=int, required=True)
     parser.add_argument("--api-key-env", default="RUNWAY_API_KEY", help="Environment variable name; never the key value.")
+    parser.add_argument("--trusted-runtime-index", type=Path,
+                        help="Private receipt index outside the output root; retain it separately.")
     arguments = parser.parse_args(argv)
     try:
-        runtime = RuntimeEvidence(arguments.output_root, arguments.run_id, arguments.attempt_id)
+        pins = (RuntimePinStore(arguments.trusted_runtime_index, output_root=arguments.output_root,
+                               ledger_path=arguments.ledger, run_id=arguments.run_id)
+                if arguments.trusted_runtime_index is not None else None)
+        runtime = RuntimeEvidence(arguments.output_root, arguments.run_id, arguments.attempt_id,
+                                  pin_store=pins)
         evidence = StoredArtifact(arguments.check_path, arguments.check_sha256, arguments.check_size)
         result = submit_saved_request(arguments.output_root, arguments.ledger, evidence,
                                       run_id=arguments.run_id, attempt_id=arguments.attempt_id,
