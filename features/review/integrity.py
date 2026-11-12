@@ -13,6 +13,7 @@ from zipfile import ZIP_STORED, ZipFile, ZipInfo
 from core.budget import BudgetLedger
 from core.json_data import unique_fields
 from core.storage import MAX_ARTIFACT_BYTES, StoredArtifact, read_verified
+from features.inference.preparation_contract import PREPARATION_CONTROL_LIMITS
 from features.review.inventory_contract import MAX_INVENTORY_BYTES, _check_inventory
 
 
@@ -38,6 +39,14 @@ class ExportArchiveIntegrity:
     inventory: StoredArtifact
     payload_file_count: int
     total_payload_bytes: int
+
+
+@dataclass(frozen=True)
+class _VerifiedArchive:
+    integrity: ExportArchiveIntegrity
+    inventory: dict
+    records: dict[str, StoredArtifact]
+    controls: dict[str, bytes]
 
 
 def _check_reference(record: StoredArtifact, expected_directory: str, suffix: str, limit: int) -> None:
@@ -136,21 +145,10 @@ def _read_member(archive: ZipFile, member: ZipInfo, record: StoredArtifact, *, r
     return bytes(retained)
 
 
-def verify_export_archive(output_root: Path, archive_ref: StoredArtifact,
-                          inventory_ref: StoredArtifact, *, run_id: str,
-                          attempt_id: str) -> ExportArchiveIntegrity:
-    """Verify the actual ZIP without reading original evidence or writing files.
-
-    Both references must come from a trusted caller. Only archive_ref is read
-    from output_root/run_id; inventory_ref anchors the exact inventory.json
-    bytes and need not exist locally. The complete ZIP is held in memory using
-    the storage API, while payload members are read in bounded chunks.
-
-    This checks the ZIP and inventory contract, not the bundled record graph,
-    media decoding, private evidence, ledger, human or provider authenticity,
-    or release outcomes. A consistent replacement of both trusted references
-    is outside the integrity guarantee. No extraction, clock, or network is used.
-    """
+def _read_verified_archive(output_root: Path, archive_ref: StoredArtifact,
+                            inventory_ref: StoredArtifact, *, run_id: str,
+                            attempt_id: str, include_preparation: bool = False) -> _VerifiedArchive:
+    """Verify one snapshot; optionally retain only the fixed preparation controls."""
     try:
         BudgetLedger._run_id(run_id)
         BudgetLedger._attempt_id(attempt_id)
@@ -172,8 +170,36 @@ def verify_export_archive(output_root: Path, archive_ref: StoredArtifact,
             records = _check_inventory(data, run_id=run_id, attempt_id=attempt_id)
             if names != ["inventory.json", *records]:
                 raise ArchiveIntegrityError("ZIP members do not match the selected inventory.")
+            limits = {f"attempts/{attempt_id}/{name}": limit
+                      for name, limit in PREPARATION_CONTROL_LIMITS.items()} if include_preparation else {}
+            for path, limit in limits.items():
+                if records[path].size > limit:
+                    raise ArchiveIntegrityError("Preparation control exceeds its retained byte limit.")
+            controls = {}
             for member in members[1:]:
-                _read_member(archive, member, records[member.filename])
-        return ExportArchiveIntegrity(archive_ref, inventory_ref, len(records), data["totalFileBytes"])
+                member_bytes = _read_member(archive, member, records[member.filename], retain=member.filename in limits)
+                if member.filename in limits:
+                    controls[member.filename] = member_bytes
+        result = ExportArchiveIntegrity(archive_ref, inventory_ref, len(records), data["totalFileBytes"])
+        return _VerifiedArchive(result, data, records, controls)
     except Exception:
         raise ArchiveIntegrityError("Export archive integrity could not be verified for this attempt.") from None
+
+
+def verify_export_archive(output_root: Path, archive_ref: StoredArtifact,
+                          inventory_ref: StoredArtifact, *, run_id: str,
+                          attempt_id: str) -> ExportArchiveIntegrity:
+    """Verify the actual ZIP without reading original evidence or writing files.
+
+    Both references must come from a trusted caller. Only archive_ref is read
+    from output_root/run_id; inventory_ref anchors the exact inventory.json
+    bytes and need not exist locally. The complete ZIP is held in memory using
+    the storage API, while payload members are read in bounded chunks.
+
+    This checks the ZIP and inventory contract, not the bundled record graph,
+    media decoding, private evidence, ledger, human or provider authenticity,
+    or release outcomes. A consistent replacement of both trusted references
+    is outside the integrity guarantee. No extraction, clock, or network is used.
+    """
+    return _read_verified_archive(output_root, archive_ref, inventory_ref,
+                                  run_id=run_id, attempt_id=attempt_id).integrity

@@ -324,6 +324,22 @@ and references cannot be authenticated by hashes alone. Linked-record graph,
 media decoding, human/provider provenance, full-run budget, and release audits
 remain separate. The future QA owner must implement `qa/verify_run.py` separately.
 
+`verify_export_preparation` takes the same trusted archive and inventory
+references and expected IDs. It verifies the entire ZIP, then checks preparation
+records retained from that same byte snapshot: the manifest, configuration,
+placement, input declarations, and prompt. Four JSON records are limited to
+64 KiB each; the prompt is limited to 4000 bytes and 1000 characters. All nine
+frozen references must match the inventory, and the declared source kind must
+agree. The existing filesystem reader shares the preparation rules, including
+the locked configuration schema and placement validation. No original files,
+extraction, writes, clock, or network are needed.
+
+The frozen `ExportPreparationIntegrity` result contains the archive integrity
+result, preparation reference, and declared source kind. These checks establish
+record consistency, not media correctness or authenticity. Review, raw metadata,
+selected scorecard, private evidence, full-run audits, and global outcome
+evaluation remain separate.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh
