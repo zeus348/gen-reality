@@ -243,6 +243,18 @@ latest-review selection. Review pages and manifests stay unchanged. A binding
 does not authenticate a human or prove live generation; both global outcomes
 remain `NOT_RUN`. This library operation makes no provider calls.
 
+`read_scorecard_binding` verifies an explicitly selected binding reference with
+an existing open coordinator and expected run and attempt IDs. It returns frozen
+binding, card, and review-manifest references plus a recomputed rubric assessment.
+It checks current completed-task records, source hashes, native endpoints, and
+the complete canonical receipt. Extra fields or changed verdicts are rejected.
+The review must follow completion, but historical reads do not consult today's
+clock or the spending deadline. They create no schema, change no ledger rows, and
+publish no artifacts. The reader uses the existing ledger connection; it is not
+a standalone SQLite snapshot auditor. It neither selects a latest review nor
+establishes human participation or live provider provenance. The writer still
+checks that a newly bound review time is no later than its trusted current time.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh

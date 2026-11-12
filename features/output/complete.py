@@ -37,6 +37,29 @@ def _publish_or_verify(root: Path, path: str, contents: bytes) -> StoredArtifact
         return expected
 
 
+def read_completed_output(coordinator: SubmissionCoordinator, output_root: Path,
+                          attempt_id: str) -> CompletedOutput | None:
+    """Read existing completion records without creating tables or recovering jobs."""
+    with coordinator._mutex:
+        coordinator._require_open()
+        with coordinator.ledger._connection() as connection:
+            row = connection.execute("SELECT o.*, r.run_id FROM completed_outputs o "
+                                     "JOIN reservations r USING (attempt_id) WHERE attempt_id=?",
+                                     (attempt_id,)).fetchone()
+        if row is None:
+            return None
+        job = coordinator.get(attempt_id)
+        if job.state != "SUCCEEDED" or job.provider_task_id != row["provider_task_id"]:
+            raise OutputError("Output record conflicts with the current task.")
+        raw = StoredArtifact(row["raw_path"], row["raw_sha256"], row["raw_size"])
+        metadata = StoredArtifact(row["metadata_path"], row["metadata_sha256"], row["metadata_size"])
+        root = Path(output_root) / row["run_id"]
+        read_verified(root, raw)
+        read_verified(root, metadata)
+        return CompletedOutput(row["run_id"], attempt_id, job.provider_task_id,
+                               row["provider_evidence_sha256"], raw, metadata, row["completed_unix"])
+
+
 class OutputCompleter:
     """One trusted coordinator owns the ledger and application output root.
 
@@ -64,24 +87,7 @@ class OutputCompleter:
                 """)
 
     def get(self, attempt_id: str) -> CompletedOutput | None:
-        with self.coordinator._mutex:
-            self.coordinator._require_open()
-            with self.coordinator.ledger._connection() as connection:
-                row = connection.execute("SELECT o.*, r.run_id FROM completed_outputs o "
-                                         "JOIN reservations r USING (attempt_id) WHERE attempt_id=?",
-                                         (attempt_id,)).fetchone()
-            if row is None:
-                return None
-            job = self.coordinator.get(attempt_id)
-            if job.state != "SUCCEEDED" or job.provider_task_id != row["provider_task_id"]:
-                raise OutputError("Output record conflicts with the current task.")
-            raw = StoredArtifact(row["raw_path"], row["raw_sha256"], row["raw_size"])
-            metadata = StoredArtifact(row["metadata_path"], row["metadata_sha256"], row["metadata_size"])
-            root = self.output_root / row["run_id"]
-            read_verified(root, raw)
-            read_verified(root, metadata)
-            return CompletedOutput(row["run_id"], attempt_id, job.provider_task_id,
-                                   row["provider_evidence_sha256"], raw, metadata, row["completed_unix"])
+        return read_completed_output(self.coordinator, self.output_root, attempt_id)
 
     def complete(self, attempt_id: str, download: Callable[[str, str], bytes]) -> CompletedOutput:
         """Validate, publish, then commit success and its artifact records together."""
