@@ -268,15 +268,23 @@ differs from the normalized input. Resource limits are 256 MiB, twenty seconds,
 Supported codecs are H.264, HEVC, AV1, and MPEG-4. It accepts one video stream
 and at most one audio stream, with up to eight audio channels at 192 kHz.
 Every decoded frame must keep the declared dimensions; resolution changes fail.
+The validator requires the MP4's declared container `start_time` and records it
+as `timelineOriginSeconds`. Frame PTS remain native; elapsed frame time is PTS
+minus that origin and must fit the declared container duration. Thus a one-second
+clip starting at PTS 1.25 can retain frames at 1.25 through 2.216667. The origin
+is not inferred from the first video frame: earlier audio can leave a real gap
+before video starts. Missing or invalid origin in a fresh probe is rejected.
 Content validation alone does not prove a real provider generation or visual
 quality.
 
 `plan_review_frames` plans the five review samples at 0, 1, 2, 3, and 4 seconds.
-Pass the validated normalized source timestamps and the raw timestamps and
-declared duration. It records actual source and nearest raw frame indexes and
-timestamps, choosing the earlier frame on an exact tie. It preserves timestamp
-offsets, including the source validator's small tolerance around zero, and
-reports position within the raw timestamp span separately from the
+Pass the validated normalized source timestamps, native raw timestamps, declared
+duration, and `raw_timeline_origin_seconds` (default zero). It records actual
+source and nearest raw frame indexes and timestamps, choosing the earlier frame
+on an exact tie. It preserves timestamp
+values, compares elapsed raw times to source PTS, and records offset as elapsed
+raw time minus source PTS, including the source validator's small tolerance
+around zero. It reports position within the raw timestamp span separately from the
 declared duration flag. A positive first timestamp is valid; the last timestamp
 is not playback end. Container duration can include longer audio, so the flag
 does not prove video coverage. This helper creates no images or acceptance
@@ -297,6 +305,18 @@ references the original source, normalized five-second sample basis, actual
 provider input and guide, unchanged raw video, and five source/guide/raw PNG
 references. Mode A reuses its static keyframe PNG; Mode B samples its guide clip.
 It records native frame indexes, timestamps, offsets, and duration annotations.
+New raw metadata carries the origin into the review's `rawTimelineOriginSeconds`.
+Saved metadata and reviews without these fields retain their original zero
+basis; rebuilding those legacy reviews preserves their bytes. New review pages
+label native PTS and elapsed time separately. Browser control time is not claimed
+to measure native PTS, and no seek synchronization is introduced. Scorecard
+endpoints still require exact saved native PTS; container duration never supplies
+an inferred final frame boundary.
+If an older completion saved raw bytes and metadata before its final database
+commit failed, retry can reuse the exact old metadata only after verifying every
+field and its zero-based timeline. Recovery keeps its bytes and hash; fresh
+completions always publish the explicit origin. Changed metadata or a
+contradictory explicit origin is rejected rather than rewritten.
 PNGs keep decoded geometry without applying rotation metadata; these records do
 not verify display orientation or video coverage. Matching repeats verify and
 reuse existing bytes, interrupted publication can resume, and the manifest is
@@ -449,8 +469,9 @@ private evidence hash/size references must agree with the inventory. Private
 record bytes stay excluded. The raw metadata must reference the same output and
 task, with bounded geometry, duration, and strictly increasing recorded PTS.
 
-Each raw sample must use its recorded frame PTS and the nearest raw frame to
-the declared source PTS, choosing the earlier frame on a tie. Offset, span, and
+Each raw sample must use its recorded native PTS and the nearest elapsed raw frame
+to the declared source PTS, choosing the earlier frame on a tie. Metadata and
+review origins must agree, with absent saved fields meaning zero. Offset, span, and
 duration labels are checked. Shared pure rules keep filesystem review readers
 consistent. These checks do not decode media or prove that saved timestamps
 describe actual frames. Full source/guide timelines are unavailable and are

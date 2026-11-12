@@ -4,7 +4,7 @@ from bisect import bisect_left
 from dataclasses import dataclass
 import math
 
-from features.output.validate import MAX_RAW_FRAMES
+from features.output.validate import MAX_RAW_FRAMES, _check_origin
 
 
 @dataclass(frozen=True)
@@ -12,7 +12,7 @@ class FrameMatch:
     """One source frame and its nearest raw frame, with original timestamps.
 
     raw_span_position is before_first, within_span, or after_last. It compares
-    the source timestamp with raw frame timestamps, not frame display intervals.
+    source elapsed time with raw elapsed frame times, not frame display intervals.
     within_declared_duration uses the media interval [0, duration). Container
     duration can include longer audio, so this flag does not prove video coverage.
     """
@@ -51,39 +51,56 @@ def _nearest_index(times: tuple[float, ...], target_seconds: float) -> int:
     return right
 
 
+def _raw_elapsed_times(native_times: tuple[float, ...], duration_seconds: float,
+                       origin_seconds: float = 0.0) -> tuple[float, ...]:
+    """Validate native PTS and return elapsed times for comparison only."""
+    _check_origin(origin_seconds)
+    if (type(duration_seconds) not in (int, float)
+            or not 0 < duration_seconds <= 20 or not math.isfinite(duration_seconds)):
+        raise ValueError("Raw duration must be positive, finite, and at most twenty seconds.")
+    if (type(native_times) is not tuple or not 1 <= len(native_times) <= MAX_RAW_FRAMES
+            or any(type(value) not in (int, float) for value in native_times)):
+        raise ValueError("Raw timestamps must be a bounded tuple of numbers.")
+    try:
+        elapsed = tuple(value - origin_seconds for value in native_times)
+    except OverflowError:
+        raise ValueError("Raw timestamps exceed the supported numeric range.") from None
+    _validate_timeline(elapsed, minimum_count=1, maximum_count=MAX_RAW_FRAMES,
+                       duration_seconds=duration_seconds)
+    return elapsed
+
+
 def plan_review_frames(source_frame_seconds: tuple[float, ...],
                        raw_frame_seconds: tuple[float, ...], *,
-                       raw_duration_seconds: float) -> tuple[FrameMatch, ...]:
+                       raw_duration_seconds: float,
+                       raw_timeline_origin_seconds: float = 0.0) -> tuple[FrameMatch, ...]:
     """Match source inspection times 0 through 4 to nearest decoded raw frames.
 
     Pass the validated normalized source timeline and RawVideo's timeline and
-    duration. Check numeric bounds here; media validation belongs to the caller.
+    duration and declared container origin. Check numeric bounds here; media
+    validation belongs to the caller. Saved native timestamps remain unchanged.
     Use actual source timestamps for raw selection and choose the earlier frame
     on an exact tie. A positive first raw timestamp is valid. A final timestamp
     does not mark playback end. Targets outside duration still get a nearest
     existing frame, with an explicit duration flag. This plan assigns no verdict.
     """
-    if (type(raw_duration_seconds) not in (int, float)
-            or not 0 < raw_duration_seconds <= 20 or not math.isfinite(raw_duration_seconds)):
-        raise ValueError("Raw duration must be positive, finite, and at most twenty seconds.")
+    elapsed = _raw_elapsed_times(raw_frame_seconds, raw_duration_seconds, raw_timeline_origin_seconds)
     # Normalized source validation permits a 0.00001-second error at time zero.
     _validate_timeline(source_frame_seconds, minimum_count=120, maximum_count=120,
                        duration_seconds=5.0, minimum_seconds=-0.00001)
-    _validate_timeline(raw_frame_seconds, minimum_count=1, maximum_count=MAX_RAW_FRAMES,
-                       duration_seconds=raw_duration_seconds)
     matches = []
     for requested_seconds in (0.0, 1.0, 2.0, 3.0, 4.0):
         source_index = _nearest_index(source_frame_seconds, requested_seconds)
         source_seconds = source_frame_seconds[source_index]
-        raw_index = _nearest_index(raw_frame_seconds, source_seconds)
+        raw_index = _nearest_index(elapsed, source_seconds)
         raw_seconds = raw_frame_seconds[raw_index]
-        if source_seconds < raw_frame_seconds[0]:
+        if source_seconds < elapsed[0]:
             position = "before_first"
-        elif source_seconds > raw_frame_seconds[-1]:
+        elif source_seconds > elapsed[-1]:
             position = "after_last"
         else:
             position = "within_span"
         matches.append(FrameMatch(requested_seconds, source_index, source_seconds,
-                                  raw_index, raw_seconds, raw_seconds - source_seconds,
+                                  raw_index, raw_seconds, elapsed[raw_index] - source_seconds,
                                   position, 0 <= source_seconds < raw_duration_seconds))
     return tuple(matches)

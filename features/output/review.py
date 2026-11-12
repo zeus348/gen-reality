@@ -119,7 +119,8 @@ def build_review_evidence(coordinator: SubmissionCoordinator, output_root: Path,
 
             source_times = _normalized_times(read_verified(root, prepared.normalized_source))
             raw_times = tuple(metadata["frameSeconds"])
-            matches = plan_review_frames(source_times, raw_times, raw_duration_seconds=metadata["durationSeconds"])
+            matches = plan_review_frames(source_times, raw_times, raw_duration_seconds=metadata["durationSeconds"],
+                                         raw_timeline_origin_seconds=metadata.get("timelineOriginSeconds", 0.0))
             mode = checked.frozen.mode
             guide = prepared.keyframe_a if mode == "A" else prepared.guide_b
             if mode == "A":
@@ -170,6 +171,8 @@ def build_review_evidence(coordinator: SubmissionCoordinator, output_root: Path,
                 "samples": samples, "samplePixelFormat": "8-bit RGB", "sampleAutomaticRotationApplied": False,
                 "visualEffectDemonstrated": "NOT_RUN", "automatedWorkflowComplete": "NOT_RUN",
             }
+            if "timelineOriginSeconds" in metadata:
+                manifest["rawTimelineOriginSeconds"] = metadata["timelineOriginSeconds"]
             body = (json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
             return _publish_or_verify(root, review_prefix + "manifest.json", body)
     except Exception:

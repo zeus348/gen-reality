@@ -5,9 +5,8 @@ from pathlib import Path
 
 from core.storage import StoredArtifact
 from features.inference.preflight import _match_fields
-from features.output.align import _nearest_index
 from features.output.review_contract import (
-    _check_output_metadata, _check_review_header, _parse_review_json, _raw_times, _view_records,
+    _check_output_metadata, _check_raw_samples, _check_review_header, _parse_review_json, _view_records,
 )
 from features.review.integrity import _read_verified_archive
 from features.review.preparation import ExportPreparationIntegrity, _check_preparation_snapshot
@@ -44,24 +43,6 @@ def _check_private_references(review: dict, inventory: dict, prefix: str) -> Non
         "payloadSha256": summaries["frozenRequest"]["sha256"],
         "requestBodySha256": summaries["request"]["sha256"],
     })
-
-
-def _check_raw_samples(review: dict, metadata: dict) -> None:
-    times = _raw_times(metadata)
-    duration = metadata["durationSeconds"]
-    for sample in review["samples"]:
-        source_time, raw = sample["source"]["ptsSeconds"], sample["raw"]
-        index = raw["frameIndex"]
-        if index >= len(times) or index != _nearest_index(times, source_time) or raw["ptsSeconds"] != times[index]:
-            raise ExportReviewError("Raw sample does not match the saved native timeline.")
-        if source_time < times[0]:
-            position = "before_first"
-        elif source_time > times[-1]:
-            position = "after_last"
-        else:
-            position = "within_span"
-        _match_fields(raw, {"spanPosition": position, "withinDeclaredDuration": 0 <= source_time < duration})
-        # The shared view checks already verify offset = raw PTS - source PTS.
 
 
 def _check_review_snapshot(snapshot, *, run_id: str, attempt_id: str) -> ExportReviewIntegrity:
