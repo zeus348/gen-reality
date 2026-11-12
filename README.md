@@ -140,6 +140,19 @@ reconciliation, its timestamp is NULL and the state is still durable. These
 records establish neither live execution nor actual charges. The current
 spending deadline starts at approval, not at the start of the entire experiment.
 
+`run_events` puts new approvals, reservations, final charges, and submission-event
+links in one committed order. Each journal entry shares its source transaction.
+Use its sequence to reconstruct actual-or-reserved amounts when timestamps tie.
+Financial entries hold fixed snapshots of approved limits, reserved cents and
+payload/key hashes, or actual cents and the receipt hash. Snapshots use at most
+4096 ASCII JSON bytes. The frozen payload still binds the separate pricing
+evidence; the journal does not verify pricing or billing receipts. A final charge
+survives an ordinary clock error with a NULL observation time. Identical retries
+add no entry. SQL triggers block updates, deletions, and replacement through
+either journal sequence or submission-event link. Existing financial records
+and old submission events remain unlinked; their missing history is not filled
+in. This journal records local changes, not remote receipt or live provenance.
+
 `RunwayCreateAdapter` uses the official `runwayml` 5.24.0 SDK. Mode A sends one
 keyframe at zero seconds; Mode B omits `keyframes`. It disables SDK retries and
 HTTP redirects. Its required recorder receives the serialized request body

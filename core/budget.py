@@ -11,6 +11,8 @@ import sqlite3
 import time
 from uuid import uuid4
 
+from core import events
+
 
 class BudgetError(ValueError):
     """A budget operation is invalid or has no server approval."""
@@ -84,6 +86,7 @@ class BudgetLedger:
                     evidence_sha256 TEXT NOT NULL
                 );
             """)
+            events.create_event_table(connection)
         # SQLite syncs database/WAL contents; persist newly created directory entries.
         directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -142,15 +145,16 @@ class BudgetLedger:
             if type(value) is not int or not 1 <= value <= maximum:
                 raise BudgetError("Budget values must be positive integers within the P0 limits.")
         now = self._now()
-        try:
-            with self._transaction() as connection:
+        with self._transaction() as connection:
+            try:
                 connection.execute("INSERT INTO approved_runs (run_id, approved_by, limit_cents, max_attempts, "
                                    "cost_cents, started_unix, deadline_unix, last_checked_unix) "
                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                    (run_id, approved_by, limit_cents, max_attempts, cost_cents,
                                     now, now + max_elapsed_minutes * 60, now))
-        except sqlite3.IntegrityError:
-            raise BudgetError("This run already has a server-side approval.") from None
+            except sqlite3.IntegrityError:
+                raise BudgetError("This run already has a server-side approval.") from None
+            events.record_approval(connection, run_id, now)
 
     def reserve(self, run_id: str, key: str, payload_sha256: str, *,
                 attempt_id: str | None = None) -> Reservation:
@@ -209,6 +213,7 @@ class BudgetLedger:
                 except sqlite3.IntegrityError:
                     raise IdempotencyConflict("Attempt ID already belongs to another reservation.") from None
                 connection.execute("UPDATE approved_runs SET last_checked_unix=? WHERE run_id=?", (now, run_id))
+                events.record_reservation(connection, reserved_id, now)
                 reservation = Reservation(run_id, reserved_id, payload_sha256, run["cost_cents"], "RESERVED")
         # Raise only after committing the stop, so an error cannot roll it back.
         if reservation is None:
@@ -253,6 +258,7 @@ class BudgetLedger:
                 return charge
             connection.execute("INSERT INTO actual_charges VALUES (?, ?, ?)",
                                (attempt_id, actual_cents, evidence_sha256))
+            events.record_charge(connection, attempt_id, events.observation_time(self._now))
         return charge
 
     @staticmethod

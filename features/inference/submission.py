@@ -8,6 +8,7 @@ import stat
 from threading import RLock
 from typing import Callable
 
+from core import events
 from core.budget import BudgetError, BudgetExceeded, BudgetLedger
 
 
@@ -122,22 +123,20 @@ class SubmissionCoordinator:
 
     def _event_time(self) -> float | None:
         """Keep observed state even when its local timestamp is unavailable."""
-        try:
-            return self.ledger._now()
-        except Exception:
-            return None
+        return events.observation_time(self.ledger._now)
 
     @staticmethod
     def _record_event(connection, attempt_id: str, event_kind: str,
                       recorded_unix: float | None, *, provider_task_id: str | None = None,
                       evidence_sha256: str | None = None):
         """Insert with the caller's state transaction; never replace an event."""
-        connection.execute(
+        cursor = connection.execute(
             "INSERT INTO submission_events "
             "(attempt_id, event_kind, recorded_unix, provider_task_id, evidence_sha256) "
             "VALUES (?, ?, ?, ?, ?)",
             (attempt_id, event_kind, recorded_unix, provider_task_id, evidence_sha256),
         )
+        events.record_submission(connection, cursor.lastrowid)
 
     def close(self):
         """Wait for the current create call before releasing ownership."""
