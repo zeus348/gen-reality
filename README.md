@@ -153,6 +153,32 @@ either journal sequence or submission-event link. Existing financial records
 and old submission events remain unlinked; their missing history is not filled
 in. This journal records local changes, not remote receipt or live provenance.
 
+`core.run_snapshot.read_run_snapshot(path, run_id=...)` captures the eight fixed
+ledger tables in one SQLite read transaction, including committed WAL records.
+It opens the existing database with `mode=ro`, `query_only=ON`, and
+`trusted_schema=OFF`; it performs no application/database-state writes, recovery,
+table creation, or checkpoint. SQLite can still create or manage WAL/SHM
+coordination files. Keep the existing parent directory private and its ancestors
+trusted throughout the read.
+
+The frozen result contains named tuple rows for the exact requested run, missing
+table names, and global presence flags for orphaned or cross-run links. Flags
+contain no unrelated row contents. Missing approval or journal history is never
+filled in. Table columns and scalar storage types are checked, but financial
+replay, record semantics, and timing verdicts are separate work. The reader does
+not open payloads, billing receipts, provider evidence, or output files.
+
+Reads are limited to 64 MiB each for the database, WAL, and rollback journal,
+4 MiB for SHM, 10,000 rows per table and 20,000 captured rows overall. SQL checks
+cell lengths before returning their values: 4096 bytes for journal JSON and
+1024 for other cells, with 8 MiB of captured scalar data overall. Query work is
+limited to five million SQLite VM instructions and lock waits to 0.25 seconds.
+Unsupported schemas, non-UTF-8 databases, or exceeded limits fail the whole read.
+The SHA-256 covers versioned, ordered, typed logical records plus missing-table
+and relationship flags, streamed with a 64 MiB encoding limit. It does not hash
+the bare database file or establish authentic billing, provider origin, or an
+acceptance outcome. Changes to unrelated valid rows do not enter this hash.
+
 `RunwayCreateAdapter` uses the official `runwayml` 5.24.0 SDK. Mode A sends one
 keyframe at zero seconds; Mode B omits `keyframes`. It disables SDK retries and
 HTTP redirects. Its required recorder receives the serialized request body
