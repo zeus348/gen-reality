@@ -127,6 +127,19 @@ that create call. Only verified task evidence can reconcile an unknown result.
 One coordinator owns each private Unix ledger until it closes; concurrent
 callers share that coordinator. Known task IDs survive restarts.
 
+The coordinator appends local `submission_events` in the same transaction as
+each claim, task record, unknown result, owner recovery, or reconciliation.
+`SEND_GATE_PASSED` records a successful final authority and freshness check;
+it does not prove that a POST reached the provider. Lower-level adapter calls
+can have no such event. SQL triggers reject event updates, deletions, and
+replacement of an existing event ID.
+Existing ledgers gain an empty journal, with no reconstructed history. Recovery
+records only the recovery performed now. Claim and send checks require valid
+timestamps. If an ordinary clock error occurs while recording a result, recovery, or
+reconciliation, its timestamp is NULL and the state is still durable. These
+records establish neither live execution nor actual charges. The current
+spending deadline starts at approval, not at the start of the entire experiment.
+
 `RunwayCreateAdapter` uses the official `runwayml` 5.24.0 SDK. Mode A sends one
 keyframe at zero seconds; Mode B omits `keyframes`. It disables SDK retries and
 HTTP redirects. Its required recorder receives the serialized request body

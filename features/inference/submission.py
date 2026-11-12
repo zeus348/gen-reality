@@ -53,12 +53,91 @@ class SubmissionCoordinator:
                         evidence_sha256 TEXT
                     )
                 """)
+                self._create_event_table(connection)
             with ledger._transaction() as connection:
-                connection.execute("UPDATE submission_jobs SET state='SUBMISSION_UNKNOWN' WHERE state='SUBMITTING'")
+                abandoned = connection.execute(
+                    "SELECT attempt_id FROM submission_jobs WHERE state='SUBMITTING' ORDER BY attempt_id"
+                ).fetchall()
+                if abandoned:
+                    now = self._event_time()
+                    for row in abandoned:
+                        attempt_id = row["attempt_id"]
+                        connection.execute(
+                            "UPDATE submission_jobs SET state='SUBMISSION_UNKNOWN' WHERE attempt_id=?",
+                            (attempt_id,),
+                        )
+                        self._record_event(connection, attempt_id, "OWNER_RECOVERED_UNKNOWN", now)
             self._lock = descriptor
         except BaseException:
             os.close(descriptor)
             raise
+
+    @staticmethod
+    def _create_event_table(connection):
+        """Add an empty journal. Existing jobs have no invented history."""
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS submission_events (
+                event_id INTEGER PRIMARY KEY CHECK (event_id > 0),
+                attempt_id TEXT NOT NULL REFERENCES reservations(attempt_id),
+                event_kind TEXT NOT NULL CHECK (event_kind IN (
+                    'CLAIMED', 'SEND_GATE_PASSED', 'TASK_RECORDED',
+                    'SUBMISSION_UNKNOWN', 'OWNER_RECOVERED_UNKNOWN', 'TASK_RECONCILED'
+                )),
+                recorded_unix REAL CHECK (recorded_unix IS NULL OR (
+                    typeof(recorded_unix) IN ('integer', 'real')
+                    AND recorded_unix >= 0 AND recorded_unix <= 253402300799
+                )),
+                provider_task_id TEXT,
+                evidence_sha256 TEXT,
+                CHECK (event_kind NOT IN ('CLAIMED', 'SEND_GATE_PASSED')
+                       OR recorded_unix IS NOT NULL),
+                CHECK ((event_kind IN ('TASK_RECORDED', 'TASK_RECONCILED')
+                        AND provider_task_id IS NOT NULL
+                        AND length(provider_task_id) BETWEEN 1 AND 128
+                        AND provider_task_id NOT GLOB '*[^A-Za-z0-9_-]*')
+                       OR (event_kind NOT IN ('TASK_RECORDED', 'TASK_RECONCILED')
+                           AND provider_task_id IS NULL)),
+                CHECK ((event_kind = 'TASK_RECONCILED' AND evidence_sha256 IS NOT NULL
+                        AND length(evidence_sha256) = 64
+                        AND evidence_sha256 NOT GLOB '*[^0-9a-f]*')
+                       OR (event_kind != 'TASK_RECONCILED' AND evidence_sha256 IS NULL))
+            )
+        """)
+        connection.execute("""
+            CREATE TRIGGER IF NOT EXISTS submission_events_no_replace
+            BEFORE INSERT ON submission_events
+            WHEN EXISTS (SELECT 1 FROM submission_events WHERE event_id = NEW.event_id)
+            BEGIN
+                SELECT RAISE(ABORT, 'Submission events cannot be replaced.');
+            END
+        """)
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS submission_events_no_{operation.lower()}
+                BEFORE {operation} ON submission_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'Submission events are append-only.');
+                END
+            """)
+
+    def _event_time(self) -> float | None:
+        """Keep observed state even when its local timestamp is unavailable."""
+        try:
+            return self.ledger._now()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _record_event(connection, attempt_id: str, event_kind: str,
+                      recorded_unix: float | None, *, provider_task_id: str | None = None,
+                      evidence_sha256: str | None = None):
+        """Insert with the caller's state transaction; never replace an event."""
+        connection.execute(
+            "INSERT INTO submission_events "
+            "(attempt_id, event_kind, recorded_unix, provider_task_id, evidence_sha256) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (attempt_id, event_kind, recorded_unix, provider_task_id, evidence_sha256),
+        )
 
     def close(self):
         """Wait for the current create call before releasing ownership."""
@@ -95,9 +174,11 @@ class SubmissionCoordinator:
             reservation = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone()
             if reservation is None:
                 raise SubmissionError("Submission has no matching reservation.")
-            claimed = self._limits_allow_send(connection, reservation)
+            now = self.ledger._now()
+            claimed = self._limits_allow_send(connection, reservation, now)
             if claimed:
                 connection.execute("INSERT INTO submission_jobs VALUES (?, 'SUBMITTING', NULL, NULL)", (attempt_id,))
+                self._record_event(connection, attempt_id, "CLAIMED", now)
         if not claimed:
             raise BudgetExceeded("Run elapsed-time limit has been reached.")
         return True
@@ -127,21 +208,32 @@ class SubmissionCoordinator:
             self._require_open()
             if self.get(attempt_id).state != "SUBMITTING":
                 raise SubmissionError("Final send requires a claimed submission.")
-            def check_authority():
+            def check_authority(*, final: bool):
+                freshness_error = None
                 with self.ledger._transaction() as connection:
                     reservation = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone()
                     now = self.ledger._now()
                     allowed = self._limits_allow_send(connection, reservation, now)
+                    if allowed and final:
+                        try:
+                            if check_current is not None:
+                                check_current(now)
+                        except BaseException as error:
+                            # Commit the authority check even on interruption.
+                            # A failed freshness check never records a passed gate.
+                            freshness_error = error
+                        else:
+                            self._record_event(connection, attempt_id, "SEND_GATE_PASSED", now)
                 if not allowed:
                     raise BudgetExceeded("Run elapsed-time limit has been reached.")
-                return now
+                if freshness_error is not None:
+                    raise freshness_error
 
-            check_authority()
+            check_authority(final=check_current is None)
             if check_current is not None:
                 # Keep the first high-water mark durable. Check budget and evidence
                 # against the same final timestamp, including a deadline or rollback.
-                now = check_authority()
-                check_current(now)
+                check_authority(final=True)
 
     @staticmethod
     def _task_id(task_id):
@@ -164,11 +256,14 @@ class SubmissionCoordinator:
                 with self.ledger._transaction() as connection:
                     connection.execute("UPDATE submission_jobs SET state='QUEUED', provider_task_id=? WHERE attempt_id=?",
                                        (task_id, attempt_id))
+                    self._record_event(connection, attempt_id, "TASK_RECORDED", self._event_time(),
+                                       provider_task_id=task_id)
             except Exception:
                 # Even a local persistence failure after acceptance cannot permit replay.
                 with self.ledger._transaction() as connection:
                     connection.execute("UPDATE submission_jobs SET state='SUBMISSION_UNKNOWN' WHERE attempt_id=?",
                                        (attempt_id,))
+                    self._record_event(connection, attempt_id, "SUBMISSION_UNKNOWN", self._event_time())
             return self.get(attempt_id)
 
     def record_verified_task(self, attempt_id: str, task_id: str, evidence_sha256: str) -> Submission:
@@ -184,4 +279,6 @@ class SubmissionCoordinator:
                     raise SubmissionError("Only an unknown submission can be reconciled.")
                 connection.execute("UPDATE submission_jobs SET state='QUEUED', provider_task_id=?, evidence_sha256=? "
                                    "WHERE attempt_id=?", (task_id, evidence_sha256, attempt_id))
+                self._record_event(connection, attempt_id, "TASK_RECONCILED", self._event_time(),
+                                   provider_task_id=task_id, evidence_sha256=evidence_sha256)
             return self.get(attempt_id)
