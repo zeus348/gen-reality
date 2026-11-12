@@ -135,8 +135,9 @@ class BudgetLedger:
             raise BudgetError("Reservation ID must be att- followed by 32 lowercase hex digits.")
 
     def approve_run(self, run_id: str, *, approved_by: str, limit_cents: int,
-                    max_attempts: int, cost_cents: int, max_elapsed_minutes: int = 180):
-        """Record one operator approval and trusted quote; never increase it in place."""
+                    max_attempts: int, cost_cents: int, max_elapsed_minutes: int = 180,
+                    deadline_unix_cap: float | None = None):
+        """Record approval once, capped by a trusted experiment deadline if supplied."""
         self._run_id(run_id)
         if type(approved_by) is not str or not approved_by.strip() or len(approved_by) > 200:
             raise BudgetError("Budget approval needs an operator identity.")
@@ -144,14 +145,24 @@ class BudgetLedger:
                                (max_elapsed_minutes, 180), (cost_cents, limit_cents)]:
             if type(value) is not int or not 1 <= value <= maximum:
                 raise BudgetError("Budget values must be positive integers within the P0 limits.")
+        if deadline_unix_cap is not None and (
+                type(deadline_unix_cap) not in (int, float)
+                or not 0 <= deadline_unix_cap <= 253_402_300_799
+                or not math.isfinite(deadline_unix_cap)):
+            raise BudgetError("Approval deadline cap must be a valid UTC timestamp.")
         now = self._now()
+        deadline = now + max_elapsed_minutes * 60
+        if deadline_unix_cap is not None:
+            if deadline_unix_cap <= now:
+                raise BudgetExceeded("Experiment elapsed-time limit has been reached.")
+            deadline = min(deadline, deadline_unix_cap)
         with self._transaction() as connection:
             try:
                 connection.execute("INSERT INTO approved_runs (run_id, approved_by, limit_cents, max_attempts, "
                                    "cost_cents, started_unix, deadline_unix, last_checked_unix) "
                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                    (run_id, approved_by, limit_cents, max_attempts, cost_cents,
-                                    now, now + max_elapsed_minutes * 60, now))
+                                    now, deadline, now))
             except sqlite3.IntegrityError:
                 raise BudgetError("This run already has a server-side approval.") from None
             events.record_approval(connection, run_id, now)

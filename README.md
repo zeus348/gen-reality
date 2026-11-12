@@ -15,6 +15,17 @@ prompt, and both guidance artifacts under one immutable attempt. Give a new
 `--source-kind synthetic_fixture`; use fresh clean camera footage for a real
 visual experiment. The clean-source and non-human flags record your declarations.
 
+The command saves `run-start.json` before media work and returns its reference
+as `runStart`. Its deadline is 180 minutes after that original start. Reusing a
+run ID keeps the same start and deadline, including after preparation fails.
+An existing nonempty run without this record cannot be adopted. If another
+starter is still publishing, retry after it finishes. A start published before
+an error is reused. A stranded pending file without a published start blocks
+that run; use a new run ID or explicit trusted repair. No media work starts
+until the record is durable. Library applications use `prepare_run_attempt`;
+the lower-level `prepare_attempt` remains an offline primitive without lifecycle
+evidence. Old preparation manifests and files are not rewritten.
+
 The manifest is an **offline preparation** record. It reports `PREPARED` and
 `LOCAL_PIPELINE_ONLY`; visual and automated generation outcomes remain `NOT_RUN`.
 This CLI does not authorize spending or call a provider. Server primitives for
@@ -113,6 +124,13 @@ any charge above its quote is retained and blocks further spending. A confirmed 
 charge does not refund an attempt or reopen the elapsed-time limit.
 Reservations alone do not authorize provider calls. The offline CLI does not
 create approvals, record final charges, or call a provider.
+For a new experiment, trusted operator code reads `read_run_start(output_root,
+run_id=...)` and passes its `deadline_unix` to `approve_run` as
+`deadline_unix_cap`. Approval stores the earlier of that cap and its requested
+duration, so delayed approval cannot restart the experiment clock. A cap can
+leave less than one minute. Reservation and final-send checks enforce the same
+stored deadline. Legacy approvals retain their original approval-time basis;
+no missing experiment start is inferred.
 Trusted server code can pass the preparation's default `att-<32 lowercase hex
 digits>` ID to `reserve(attempt_id=...)`. That ID stays the same through submission
 and billing. A different idempotency key or run cannot claim it. Reusing the key
@@ -137,8 +155,8 @@ Existing ledgers gain an empty journal, with no reconstructed history. Recovery
 records only the recovery performed now. Claim and send checks require valid
 timestamps. If an ordinary clock error occurs while recording a result, recovery, or
 reconciliation, its timestamp is NULL and the state is still durable. These
-records establish neither live execution nor actual charges. The current
-spending deadline starts at approval, not at the start of the entire experiment.
+records establish neither live execution nor actual charges. Approval time is
+recorded separately from the experiment-start artifact and its deadline cap.
 
 `run_events` puts new approvals, reservations, final charges, and submission-event
 links in one committed order. Each journal entry shares its source transaction.
@@ -569,8 +587,10 @@ quote. `--api-key-env` names a server environment variable and defaults to
 `RUNWAY_API_KEY`; never put the key value on the command line. The key must match
 the account used to prepare the check. The command does not grant approval,
 refresh evidence, or upload media. It uses a stable key for a new reservation
-and preserves an existing reservation. Known or uncertain submissions return
-their stored state after a restart, even without credentials or fresh evidence.
+and preserves an existing reservation. New work, including an existing RESERVED
+attempt, needs verified run-start evidence and approval within its fixed deadline.
+Known or uncertain submissions return their stored state after a restart, even
+without credentials, fresh evidence, or the run-start file.
 JSON output contains submission state and task ID. Exit codes are 0 for a known
 submission, 2 for an uncertain submission, and 1 for a command failure. Upload
 and preflight command orchestration remain pending.

@@ -32,7 +32,8 @@ class SubmitCommandTests(unittest.TestCase):
         self.ledger_path = self.root / "budget.sqlite"
         self.ledger = BudgetLedger(self.ledger_path, clock=lambda: self.now)
         self.ledger.approve_run("run-1", approved_by="fixture operator", limit_cents=1000,
-                               max_attempts=6, cost_cents=140)
+                               max_attempts=6, cost_cents=140,
+                               deadline_unix_cap=self.fixture.started.deadline_unix)
         self.requests = []
         self.uncertain = False
         self.response_task_id = "fixture-task"

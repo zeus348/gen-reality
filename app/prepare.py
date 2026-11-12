@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 from uuid import uuid4
 
+from core import run_start
 from core.config import load_config
 from core.storage import publish_bytes
 from features.asset.ingest import load_asset
@@ -39,6 +41,8 @@ def prepare_attempt(
     Each attempt owns copies of its inputs. A failed publication can leave an
     incomplete attempt, which must use a new ID rather than replacing any file.
     Human declarations record input provenance; they do not establish quality.
+    This offline primitive does not start an experiment clock. Application
+    callers use prepare_run_attempt before any media work.
     """
     for name in (run_id, attempt_id):
         if type(name) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) is None:
@@ -93,6 +97,18 @@ def prepare_attempt(
             "manifest": asdict(record), "outputRoot": str(root)}
 
 
+def prepare_run_attempt(source_path: Path, asset_path: Path, output_root: Path,
+                        run_id: str, attempt_id: str, placement: Placement, *,
+                        non_human: bool, clean_source: bool, source_kind: str = "clean_camera",
+                        prompt: str = DEFAULT_PROMPT, clock=time.time) -> dict:
+    """Start the experiment clock before preparing its immutable offline inputs."""
+    started = run_start.start_run(output_root, run_id=run_id, clock=clock)
+    result = prepare_attempt(source_path, asset_path, output_root, run_id, attempt_id, placement,
+                             non_human=non_human, clean_source=clean_source,
+                             source_kind=source_kind, prompt=prompt)
+    return result | {"runStart": asdict(started.record)}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -109,7 +125,7 @@ def main(argv=None) -> int:
     arguments = parser.parse_args(argv)
     try:
         placement = Placement(arguments.u, arguments.v, arguments.height_frac)
-        result = prepare_attempt(arguments.source, arguments.asset, arguments.output_root,
+        result = prepare_run_attempt(arguments.source, arguments.asset, arguments.output_root,
                                  arguments.run_id, arguments.attempt_id, placement,
                                  non_human=arguments.non_human, clean_source=arguments.confirm_clean_source,
                                  source_kind=arguments.source_kind)

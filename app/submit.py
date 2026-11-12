@@ -11,6 +11,7 @@ import time
 
 import httpx
 
+from core import run_start
 from core.budget import BudgetError, BudgetLedger, IdempotencyConflict
 from core.storage import StoredArtifact
 from features.inference.preflight import read_checked_request
@@ -25,7 +26,8 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
 
     This operator command does not create approval, refresh evidence, or upload
     media. Existing reservations retain their original identity. A repeat of
-    known or uncertain work needs neither a current key nor fresh evidence.
+    known or uncertain work needs no current key, fresh evidence, or run-start
+    file. New work requires saved start evidence and a capped approval.
     """
     BudgetLedger._run_id(run_id)
     BudgetLedger._attempt_id(attempt_id)
@@ -38,7 +40,10 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
     ledger = BudgetLedger(ledger_path, clock=clock)
     with SubmissionCoordinator(ledger) as coordinator:
         with ledger._connection() as connection:
-            approval = connection.execute("SELECT cost_cents FROM approved_runs WHERE run_id=?", (run_id,)).fetchone()
+            approval = connection.execute(
+                "SELECT cost_cents, started_unix, deadline_unix FROM approved_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
             reservation = connection.execute("SELECT * FROM reservations WHERE attempt_id=?", (attempt_id,)).fetchone()
         if approval is None or approval["cost_cents"] != checked.frozen.estimated_cents:
             raise BudgetError("Saved request needs an existing approval with the same quote.")
@@ -49,6 +54,10 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
                 raise IdempotencyConflict("Saved request does not match the existing reservation.")
             if coordinator.get(attempt_id).state != "RESERVED":
                 return submit_checked(coordinator, checked, output_root, "", transport=transport)
+        started = run_start.read_run_start(output_root, run_id=run_id)
+        if not (started.started_unix <= approval["started_unix"]
+                < approval["deadline_unix"] <= started.deadline_unix):
+            raise BudgetError("New submission needs approval within the saved experiment deadline.")
         checked.require_current(ledger._now())
         api_key = os.environ.get(api_key_env, "")
         if not api_key.strip():
