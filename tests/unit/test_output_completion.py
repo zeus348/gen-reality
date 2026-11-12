@@ -55,7 +55,7 @@ class OutputCompletionTests(unittest.TestCase):
 
     def test_artifacts_precede_success_and_fixture_content_never_claims_workflow_pass(self):
         self.observe()
-        original = completion_module._publish_or_verify
+        original = completion_module.publish_bytes
         publications = []
 
         def publish(root, path, contents):
@@ -65,7 +65,7 @@ class OutputCompletionTests(unittest.TestCase):
             publications.append(result)
             return result
 
-        with patch.object(completion_module, "_publish_or_verify", side_effect=publish):
+        with patch.object(completion_module, "publish_bytes", side_effect=publish):
             result = self.completer.complete(self.attempt, self.download)
         self.download.assert_called_once_with(TASK_ID, EVIDENCE)
         self.assertEqual(self.owner.get(self.attempt).state, "SUCCEEDED")

@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from core.storage import ArtifactExistsError, StoredArtifact, publish_bytes, read_verified
+from core.storage import ArtifactExistsError, StorageError, StoredArtifact, publish_bytes, read_verified
 from features.inference.polling import TaskPoller
 from features.inference.submission import SubmissionCoordinator
+from features.output.align import _raw_elapsed_times
 from features.output.validate import validate_raw_video
 
 
@@ -35,6 +36,32 @@ def _publish_or_verify(root: Path, path: str, contents: bytes) -> StoredArtifact
     except ArtifactExistsError:
         read_verified(root, expected)
         return expected
+
+
+def _publish_metadata(root: Path, path: str, details: dict) -> StoredArtifact:
+    """Publish current metadata or recover exact, already-saved legacy bytes."""
+    contents = (json.dumps(details, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    try:
+        return publish_bytes(root, path, contents)
+    except ArtifactExistsError:
+        pass
+    current = StoredArtifact(path, sha256(contents).hexdigest(), len(contents))
+    try:
+        read_verified(root, current)
+        return current
+    except StorageError as current_error:
+        legacy = details.copy()
+        del legacy["timelineOriginSeconds"]
+        try:
+            # An absent saved origin retains the old zero-based interpretation.
+            _raw_elapsed_times(tuple(legacy["frameSeconds"]), legacy["durationSeconds"])
+            legacy_bytes = (json.dumps(legacy, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+            record = StoredArtifact(path, sha256(legacy_bytes).hexdigest(), len(legacy_bytes))
+            read_verified(root, record)
+        except ValueError:
+            raise current_error from None
+        # Never publish this candidate: only pre-existing matching bytes qualify.
+        return record
 
 
 def read_completed_output(coordinator: SubmissionCoordinator, output_root: Path,
@@ -117,12 +144,12 @@ class OutputCompleter:
                 "runId": run_id, "attemptId": attempt_id, "providerTaskId": job.provider_task_id,
                 "raw": asdict(raw), "codec": video.codec, "width": video.width, "height": video.height,
                 "durationSeconds": video.duration_seconds, "frameRate": video.frame_rate,
+                "timelineOriginSeconds": video.timeline_origin_seconds,
                 "frameSeconds": video.frame_seconds, "audioPresent": video.audio_present,
                 "rawContentValidation": "PASS", "visualEffectDemonstrated": "NOT_RUN",
                 "automatedWorkflowComplete": "NOT_RUN",
             }
-            metadata_bytes = (json.dumps(details, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
-            metadata = _publish_or_verify(root, prefix + "metadata.json", metadata_bytes)
+            metadata = _publish_metadata(root, prefix + "metadata.json", details)
             now = self.coordinator.ledger._now()
             with self.coordinator.ledger._transaction() as connection:
                 current = connection.execute("SELECT * FROM submission_jobs WHERE attempt_id=?", (attempt_id,)).fetchone()

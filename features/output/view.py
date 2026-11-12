@@ -75,12 +75,22 @@ def _render(data: dict, prefix: str) -> bytes:
                   + media(data["rawOutput"], "Original raw output", "raw"))
     span_labels = {"before_first": "before first raw frame", "within_span": "within raw frame range",
                    "after_last": "after last raw frame"}
+    origin = data.get("rawTimelineOriginSeconds", 0.0)
+    timing_description = "Raw offset is raw PTS minus source PTS."
+    if "rawTimelineOriginSeconds" in data:
+        timing_description = (f"Declared container timeline origin is {origin:.6f} s. "
+                              "Raw elapsed time is native PTS minus that origin. "
+                              "Raw offset is elapsed raw time minus source PTS. "
+                              "Browser control time is not a native PTS measurement.")
     sample_views = []
     for second, sample in enumerate(data["samples"]):
+        raw_caption = _frame_caption("Raw output", sample["raw"])
+        if "rawTimelineOriginSeconds" in data:
+            raw_caption += f' Elapsed from container origin: {sample["raw"]["ptsSeconds"] - origin:.6f} s.'
         captions = [_frame_caption("Prepared source", sample["source"]),
                     "Submitted static keyframe; reference 0.000000 s." if data["mode"] == "A" else
                     _frame_caption("Submitted guide", sample["guide"]),
-                    _frame_caption("Raw output", sample["raw"]) +
+                    raw_caption +
                     f' Offset from source: {sample["raw"]["offsetSeconds"]:+.6f} s.' +
                     f' Span position: {span_labels[sample["raw"]["spanPosition"]]}.' +
                     f' Within declared duration: {"yes" if sample["raw"]["withinDeclaredDuration"] else "no"}.']
@@ -116,7 +126,7 @@ Use a local media player if a video cannot play. No video is converted for this 
 <section><h2>Five matched samples</h2>
 <p>Source samples use the <a href="{_url(data["sourceNormalized"], prefix)}" download>prepared five-second source</a>.
 The source player above uses the original source. PTS is the saved frame presentation time.
-Raw offset is raw PTS minus source PTS. Sample PNGs keep decoded pixel geometry without automatic display rotation.
+{timing_description} Sample PNGs keep decoded pixel geometry without automatic display rotation.
 A duration label does not prove that all requested times have video coverage.</p>
 {"".join(sample_views)}</section>
 <p><a href="manifest.json" download>Download the review manifest</a>. Keep this page with its attempt files.</p>

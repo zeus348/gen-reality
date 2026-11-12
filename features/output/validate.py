@@ -28,11 +28,22 @@ class RawVideo:
     frame_rate: str
     frame_seconds: tuple[float, ...]
     audio_present: bool
+    timeline_origin_seconds: float = 0.0
+
+
+def _check_origin(value: float) -> float:
+    """Check a declared container origin without substituting its first frame."""
+    try:
+        if type(value) not in (int, float) or value < 0 or not math.isfinite(value):
+            raise ValueError("Container timeline origin must be finite and nonnegative.")
+    except OverflowError:
+        raise ValueError("Container timeline origin must be finite and nonnegative.") from None
+    return value
 
 
 def _probe_raw(path: Path, *, frames: bool = False) -> dict:
     entries = ("stream=codec_type,codec_name,width,height,avg_frame_rate,nb_frames,channels,sample_rate:"
-               "format=duration:format_tags=major_brand")
+               "format=duration,start_time:format_tags=major_brand")
     arguments = ["-protocol_whitelist", "file,pipe", "-f", "mov"]
     if frames:
         entries = "frame=best_effort_timestamp_time,width,height"
@@ -48,6 +59,8 @@ def validate_raw_video(contents: bytes) -> RawVideo:
     2400 decoded frames. Audio is limited to eight channels at 192 kHz.
     Every decoded frame must keep the declared dimensions.
     Preserve valid timing differences from the normalized 120-frame input.
+    Bounds use elapsed time from the declared container origin; returned PTS
+    remain native. The first video frame does not replace the container origin.
     """
     if type(contents) is not bytes or not 0 < len(contents) <= MAX_RAW_BYTES:
         raise MediaError("Raw video must contain 1 byte to 256 MiB of MP4 data.")
@@ -72,6 +85,10 @@ def validate_raw_video(contents: bytes) -> RawVideo:
             if video["codec_name"] not in ("h264", "hevc", "av1", "mpeg4"):
                 raise MediaError("Raw MP4 uses an unsupported video codec.")
             duration = float(metadata["format"]["duration"])
+            declared_origin = metadata["format"]["start_time"]
+            if type(declared_origin) is not str:
+                raise MediaError("Raw video must declare its container timeline origin.")
+            origin = _check_origin(float(declared_origin))
             rate = video["avg_frame_rate"]
             if not math.isfinite(duration) or not 0 < duration <= 20:
                 raise MediaError("Raw video duration must be positive and at most twenty seconds.")
@@ -93,7 +110,7 @@ def validate_raw_video(contents: bytes) -> RawVideo:
                 raise MediaError("Raw video frame dimensions changed during decoding.")
             times = tuple(float(frame["best_effort_timestamp_time"]) for frame in frames)
             if (not 1 <= len(times) <= MAX_RAW_FRAMES
-                    or any(not math.isfinite(value) or not 0 <= value <= duration for value in times)
+                    or any(not math.isfinite(value) or not 0 <= value - origin <= duration for value in times)
                     or any(later <= earlier for earlier, later in zip(times, times[1:]))):
                 raise MediaError("Raw video has invalid frame timestamps or frame count.")
             if declared_frames is not None and len(times) != int(declared_frames):
@@ -103,4 +120,4 @@ def validate_raw_video(contents: bytes) -> RawVideo:
             raise
         raise MediaError("Raw video metadata is incomplete or unreadable.") from None
     return RawVideo(contents, sha256(contents).hexdigest(), video["codec_name"], width, height,
-                    duration, rate, times, bool(audio))
+                    duration, rate, times, bool(audio), origin)

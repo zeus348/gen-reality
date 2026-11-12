@@ -11,7 +11,7 @@ from features.inference.submission import SubmissionCoordinator
 from features.output.complete import CompletedOutput, OutputCompleter, _publish_or_verify, read_completed_output
 from features.output.review import _read_output_metadata, _verify_success_response
 from features.output.view import _verify_views
-from features.output.review_contract import ReviewContractError, _check_review_header, _raw_times
+from features.output.review_contract import ReviewContractError, _check_raw_samples, _check_review_header, _raw_times
 from features.review.score import MAX_SCORECARD_BYTES, ScorecardAssessment, assess_scorecard
 from features.review.binding_contract import (
     BindingContractError, _assess_bound_card, _exact_native_times, _make_receipt, _receipt_bytes, _utc_seconds,
@@ -45,10 +45,13 @@ def _verify_review(root: Path, manifest: StoredArtifact, *, run_id: str, attempt
     return data
 
 
-def _native_times(root: Path, completed: CompletedOutput) -> set[Decimal]:
+def _native_times(root: Path, completed: CompletedOutput, review: dict | None = None) -> set[Decimal]:
     metadata = _read_output_metadata(root, completed)
     try:
-        _raw_times(metadata)
+        if review is None:
+            _raw_times(metadata)
+        else:
+            _check_raw_samples(review, metadata)
     except ReviewContractError as error:
         raise ScorecardBindingError(str(error)) from None
     # The saved JSON has already passed its size, hash, identity, and numeric
@@ -71,7 +74,7 @@ def _binding_receipt(root: Path, review_manifest: StoredArtifact, contents: byte
     _match_fields(data, {"providerTaskId": completed.provider_task_id,
                         "rawOutput": asdict(completed.raw), "rawMetadata": asdict(completed.metadata),
                         "providerSuccess": asdict(success)})
-    native_times = _native_times(root, completed)
+    native_times = _native_times(root, completed, data)
     try:
         receipt = _make_receipt(assessed, review_manifest, data, native_times=native_times,
                                 completed_unix=completed.completed_unix)

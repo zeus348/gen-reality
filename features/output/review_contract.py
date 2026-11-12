@@ -8,8 +8,8 @@ from core.json_data import unique_fields
 from core.storage import StoredArtifact
 from features.inference.preflight import _match_fields
 from features.media.ingest import MAX_INPUT_PIXELS
-from features.output.align import _validate_timeline
-from features.output.validate import MAX_RAW_FRAMES
+from features.output.align import _nearest_index, _raw_elapsed_times
+from features.output.validate import _check_origin
 
 
 MAX_REVIEW_JSON_BYTES = 128 * 1024
@@ -61,16 +61,47 @@ def _check_output_metadata(data: dict, raw: StoredArtifact, metadata: StoredArti
 
 
 def _raw_times(metadata: dict) -> tuple[float, ...]:
-    duration = metadata["durationSeconds"]
-    if type(duration) not in (int, float) or not math.isfinite(duration) or not 0 < duration <= 20:
-        raise ReviewContractError("Raw metadata duration is invalid.")
     times = tuple(metadata["frameSeconds"])
-    _validate_timeline(times, minimum_count=1, maximum_count=MAX_RAW_FRAMES, duration_seconds=duration)
+    try:
+        _raw_elapsed_times(times, metadata["durationSeconds"], _raw_origin(metadata, "timelineOriginSeconds"))
+    except ValueError as error:
+        raise ReviewContractError(str(error)) from None
     return times
 
 
+def _raw_origin(data: dict, field: str) -> float:
+    """Saved records without a declared origin retain their original zero basis."""
+    try:
+        return _check_origin(data.get(field, 0.0))
+    except ValueError as error:
+        raise ReviewContractError(str(error)) from None
+
+
+def _check_raw_samples(review: dict, metadata: dict) -> None:
+    """Join declared origins, native sample indexes, and elapsed timing labels."""
+    times = _raw_times(metadata)
+    origin = _raw_origin(metadata, "timelineOriginSeconds")
+    if _raw_origin(review, "rawTimelineOriginSeconds") != origin:
+        raise ReviewContractError("Review and raw metadata use different timeline origins.")
+    elapsed = tuple(value - origin for value in times)
+    duration = metadata["durationSeconds"]
+    for sample in review["samples"]:
+        source_time, raw = sample["source"]["ptsSeconds"], sample["raw"]
+        index = raw["frameIndex"]
+        if index >= len(times) or index != _nearest_index(elapsed, source_time) or raw["ptsSeconds"] != times[index]:
+            raise ReviewContractError("Raw sample does not match the saved native timeline.")
+        if source_time < elapsed[0]:
+            position = "before_first"
+        elif source_time > elapsed[-1]:
+            position = "after_last"
+        else:
+            position = "within_span"
+        _match_fields(raw, {"spanPosition": position, "withinDeclaredDuration": 0 <= source_time < duration})
+        # The shared view checks verify offset = (raw PTS - origin) - source PTS.
+
+
 def _number(value, minimum: float, maximum: float) -> float:
-    if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= maximum:
+    if type(value) not in (int, float) or not minimum <= value <= maximum or not math.isfinite(value):
         raise ReviewContractError("Review timing is invalid.")
     return value
 
@@ -96,6 +127,7 @@ def _view_records(data: dict, prefix: str) -> dict[str, StoredArtifact]:
             verified[record.path] = record
 
     mode = data["mode"]
+    origin = _raw_origin(data, "rawTimelineOriginSeconds")
     check(data["sourceOriginal"], {prefix + "frozen/source_original.mp4", prefix + "frozen/source_original.mov"})
     check(data["sourceNormalized"], {prefix + "frozen/source_normalized.mp4"})
     check(data["rawOutput"], {prefix + "output/raw.mp4"})
@@ -117,9 +149,11 @@ def _view_records(data: dict, prefix: str) -> dict[str, StoredArtifact]:
         source_index = _index(source["frameIndex"], 119)
         raw_index = _index(raw["frameIndex"], 2399)
         source_time = _number(source["ptsSeconds"], -0.00001, 5)
-        raw_time = _number(raw["ptsSeconds"], 0, 20)
+        raw_time = _number(raw["ptsSeconds"], origin, origin + 20)
+        raw_elapsed = raw_time - origin
+        _number(raw_elapsed, 0, 20)
         offset = _number(raw["offsetSeconds"], -21, 21)
-        if not math.isclose(offset, raw_time - source_time, rel_tol=0, abs_tol=1e-9):
+        if not math.isclose(offset, raw_elapsed - source_time, rel_tol=0, abs_tol=1e-9):
             raise ReviewContractError("Raw offset does not match the saved timestamps.")
         if (raw["spanPosition"] not in ("before_first", "within_span", "after_last")
                 or type(raw["withinDeclaredDuration"]) is not bool):
