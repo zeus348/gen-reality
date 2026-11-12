@@ -69,6 +69,10 @@ class PrepareTests(unittest.TestCase):
         root = self.runs / "run-1"
         manifest_bytes = read_verified(root, StoredArtifact(**response["manifest"]))
         manifest = json.loads(manifest_bytes)
+        start = json.loads(read_verified(root, StoredArtifact(**response["runStart"])))
+        self.assertEqual(start["manifestType"], "experiment_start")
+        self.assertEqual(start["runId"], "run-1")
+        self.assertEqual(start["deadlineAtUnix"] - start["startedAtUnix"], 10800)
         self.assertEqual(response["state"], "PREPARED")
         self.assertEqual(manifest["state"], "PREPARED")
         self.assertEqual(manifest["manifestType"], "offline_preparation")
@@ -206,4 +210,6 @@ class PrepareTests(unittest.TestCase):
         self.assertIn("Preparation failed", errors.getvalue())
         self.assertNotIn("dummy-secret", errors.getvalue())
         self.assertNotIn("Traceback", errors.getvalue())
-        self.assertEqual(list(self.runs.iterdir()), [])
+        self.assertEqual([path.relative_to(self.runs).as_posix() for path in self.runs.rglob("*")
+                          if path.is_file()], ["run-1/run-start.json"])
+        self.assertFalse((self.runs / "run-1/attempts").exists())

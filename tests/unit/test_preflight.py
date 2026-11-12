@@ -12,6 +12,7 @@ import httpx
 import runwayml.resources.uploads as sdk_uploads
 
 from app import prepare
+from core import run_start
 from core.budget import BudgetLedger
 from core.storage import StorageError, StoredArtifact, publish_bytes, read_verified
 from features.inference.account import check_account_once
@@ -36,6 +37,7 @@ class PreflightTests(unittest.TestCase):
         self.root = Path(self.folder.name)
         self.run = self.root / "run-1"
         self.evidence = self.root / "evidence"
+        self.started = run_start.start_run(self.root, run_id="run-1", clock=lambda: 1000.0)
         video = SimpleNamespace(original_bytes=b"original" * 128, video_bytes=b"normalized" * 128)
         asset = SimpleNamespace(original_bytes=b"asset" * 128)
         guide = SimpleNamespace(keyframe_png=b"keyframe" * 128, guide_mp4=b"guide" * 128, prompt="Animate the creature.")
