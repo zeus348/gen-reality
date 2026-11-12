@@ -305,6 +305,25 @@ This is an evidence archive, not an installable software package or a release
 verdict. It preserves the inventory's outcomes and provenance declarations; it
 does not audit the complete evidence graph or establish human/provider authenticity.
 
+`verify_export_archive` takes the output root, trusted archive and inventory
+references, and expected run and attempt IDs. It reads only the ZIP. The original
+inventory, payload files, private evidence, and ledger need not remain available.
+It verifies the archive hash and size, bounds the actual central-directory entries
+before parsing, checks fixed ZIP metadata and contiguous extents, and rejects
+duplicate, extra, missing, or unsafe members. The exact `inventory.json` bytes must
+match the retained inventory reference. Its schema, identity, paths, roles,
+selection, and byte totals are checked using the shared inventory contract. Each
+payload is streamed through CRC, length, and SHA-256 checks against that inventory.
+The full ZIP is held in memory within the 512 MiB storage limit; payload reads use
+bounded chunks. No files are extracted or written, and no clock or network is used.
+
+The frozen `ExportArchiveIntegrity` result contains the verified references,
+payload file count, and total payload bytes. It makes no authenticity or release
+claim. Retain both trusted references independently: a consistently replaced ZIP
+and references cannot be authenticated by hashes alone. Linked-record graph,
+media decoding, human/provider provenance, full-run budget, and release audits
+remain separate. The future QA owner must implement `qa/verify_run.py` separately.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh
