@@ -281,8 +281,29 @@ elapsed-time, and recorded-test audits remain `NOT_RUN`, as do both global outco
 This operation creates an inventory, not a ZIP. Its `files` list defines future
 ZIP payload members; a future ZIP must also contain the exact inventory bytes as
 `inventory.json`. `totalFileBytes` counts payload bytes without asserting that an
-archive fits the 512 MiB artifact limit. ZIP creation and independent release
-auditing remain separate work.
+archive fits the 512 MiB artifact limit. ZIP creation uses the separate API below;
+independent release auditing remains future work.
+
+`build_export_archive` takes the output root, a trusted inventory reference, and
+expected run and attempt IDs. It checks inventory identity, schema, same-attempt
+paths and roles, selected references, and byte totals. It packages the exact
+inventory bytes as `inventory.json` first, then only the sorted listed payload
+members. Every payload is hash-verified before its bytes are written. Original
+media bytes stay unchanged. The operation needs no ledger, private provider
+records, current clock, directory scan, or provider call.
+
+ZIP members use `ZIP_STORED`, fixed 1980-01-01 timestamps, Unix regular-file mode
+`0600`, and no comments or extra fields. ZIP64 is disabled. An empty ZIP with the
+same names and metadata supplies the exact overhead calculation. The complete
+size must fit 512 MiB before any payload is read. Construction uses a private
+bounded temporary file and checks its final size before create-only publication
+at `export/archives/{SHA256}.zip` within the attempt. It holds one payload at a
+time during construction; final publication uses the existing byte-based storage
+API. Repeats return the same artifact, and changed existing archives are rejected.
+
+This is an evidence archive, not an installable software package or a release
+verdict. It preserves the inventory's outcomes and provenance declarations; it
+does not audit the complete evidence graph or establish human/provider authenticity.
 
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
