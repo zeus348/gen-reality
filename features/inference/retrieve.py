@@ -11,7 +11,8 @@ from runwayml import APITimeoutError
 from core.json_data import unique_fields
 from core.storage import ArtifactExistsError, StoredArtifact, publish_bytes, read_verified
 from features.inference.polling import PROVIDER_STATUSES, TaskObservation
-from features.inference.runway import ProviderError, make_sdk_client
+from features.inference.runway import API_URL, ProviderError, make_sdk_client
+from features.inference.runtime import RuntimeEvidence
 from features.inference.submission import SubmissionCoordinator
 
 
@@ -20,7 +21,8 @@ MAX_TASK_RESPONSE_BYTES = 1024 * 1024
 
 def retrieve_task_once(task_id: str, api_key: str, evidence_root: Path, *,
                        timeout_seconds: float = 10.0,
-                       transport: httpx.BaseTransport | None = None) -> TaskObservation:
+                       transport: httpx.BaseTransport | None = None,
+                       runtime: RuntimeEvidence | None = None) -> TaskObservation:
     """Perform one GET, then store a valid successful JSON body by its hash.
 
     This reads task metadata, not the output video. Successful bodies are limited
@@ -31,8 +33,16 @@ def retrieve_task_once(task_id: str, api_key: str, evidence_root: Path, *,
     if (type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= 30
             or not math.isfinite(timeout_seconds)):
         raise ValueError("Task GET timeout must be greater than zero and at most 30 seconds.")
+    operation = None
+    if runtime is not None:
+        runtime.require_evidence_root(evidence_root)
+        operation = runtime.task_get(task_id, transport)
     try:
-        with make_sdk_client(api_key, transport=transport) as client:
+        with make_sdk_client(api_key, transport=transport,
+                check_response=operation.observe_response if operation is not None else None) as client:
+            if operation is not None:
+                operation.use_client(transport, client._client, API_URL + "/v1/tasks/" + task_id)
+                operation.start()
             with client.tasks.with_streaming_response.retrieve(task_id, timeout=timeout_seconds) as response:
                 chunks, size = [], 0
                 for chunk in response.iter_bytes(chunk_size=64 * 1024):
@@ -40,6 +50,8 @@ def retrieve_task_once(task_id: str, api_key: str, evidence_root: Path, *,
                     if size > MAX_TASK_RESPONSE_BYTES:
                         raise ProviderError("Provider task response is too large.")
                     chunks.append(chunk)
+                if operation is not None:
+                    operation.body_finished()
                 body = b"".join(chunks)
         data = json.loads(body, object_pairs_hook=unique_fields)
         if (type(data) is not dict or data.get("id") != task_id
@@ -53,8 +65,13 @@ def retrieve_task_once(task_id: str, api_key: str, evidence_root: Path, *,
             publish_bytes(evidence_root, path, body)
         except ArtifactExistsError:
             read_verified(evidence_root, StoredArtifact(path, digest, len(body)))
+        if operation is not None:
+            operation.complete(StoredArtifact(path, digest, len(body)), data["status"])
         return TaskObservation(task_id, data["status"], digest)
     except (APITimeoutError, httpx.TimeoutException):
         raise TimeoutError("Task GET timed out; resume with the same task ID.") from None
     except Exception:
         raise ProviderError("Task GET or evidence recording failed; the task remains unchanged.") from None
+    finally:
+        if operation is not None:
+            operation.complete()

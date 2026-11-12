@@ -14,6 +14,7 @@ import httpx
 from core.json_data import unique_fields
 from core.storage import StoredArtifact, read_verified
 from features.inference.retrieve import MAX_TASK_RESPONSE_BYTES
+from features.inference.runtime import RuntimeEvidence
 from features.inference.submission import SubmissionCoordinator
 from features.output.validate import MAX_RAW_BYTES
 
@@ -69,7 +70,8 @@ def _output_url(task_id: str, evidence_sha256: str, evidence_root: Path,
 def download_task_output(task_id: str, evidence_sha256: str, evidence_root: Path, *,
                          allowed_hosts: frozenset[str],
                          transport: httpx.BaseTransport | None = None,
-                         clock: Callable[[], float] = time.monotonic) -> bytes:
+                         clock: Callable[[], float] = time.monotonic,
+                         runtime: RuntimeEvidence | None = None) -> bytes:
     """GET one output without provider credentials, redirects, or retries.
 
     The server owns the evidence root and exact host allowlist. Never obtain the
@@ -79,14 +81,23 @@ def download_task_output(task_id: str, evidence_sha256: str, evidence_root: Path
     Check a 60-second deadline between chunks; a stalled read can take another
     30 seconds. A failed download leaves the provider task and its cost unchanged.
     """
+    operation = None
     try:
+        if runtime is not None:
+            runtime.require_evidence_root(evidence_root)
         url = _output_url(task_id, evidence_sha256, evidence_root, allowed_hosts)
         # Keep this filter installed. Removing it could expose concurrent GETs.
         logging.getLogger("httpx").addFilter(_redact_httpx_url)
         deadline = clock() + DOWNLOAD_SECONDS
         timeout = httpx.Timeout(30.0, connect=10.0)
         with httpx.Client(transport=transport, timeout=timeout, follow_redirects=False) as client:
+            if runtime is not None:
+                operation = runtime.download(task_id, evidence_sha256, url.host, transport, client, url)
+            if operation is not None:
+                operation.start()
             with client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
+                if operation is not None:
+                    operation.observe_response(response)
                 if response.status_code != 200:
                     raise ValueError("Output GET did not succeed.")
                 if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
@@ -103,8 +114,16 @@ def download_task_output(task_id: str, evidence_sha256: str, evidence_root: Path
                     if size > MAX_RAW_BYTES:
                         raise ValueError("Output size exceeds the raw-video limit.")
                     buffer.write(chunk)
+                if operation is not None:
+                    operation.body_finished()
                 if clock() >= deadline or size == 0 or (length is not None and size != int(length)):
                     raise ValueError("Output GET did not finish with the expected bytes in time.")
-                return buffer.getvalue()
+                contents = buffer.getvalue()
+                if operation is not None:
+                    operation.complete(contents)
+                return contents
     except Exception:
         raise DownloadError("Output GET failed; resume the same task.") from None
+    finally:
+        if operation is not None:
+            operation.complete()

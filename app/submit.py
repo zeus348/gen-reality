@@ -15,13 +15,15 @@ from core import run_start
 from core.budget import BudgetError, BudgetLedger, IdempotencyConflict
 from core.storage import StoredArtifact
 from features.inference.preflight import read_checked_request
+from features.inference.runtime import RuntimeEvidence
 from features.inference.send import submit_checked
 from features.inference.submission import Submission, SubmissionCoordinator
 
 
 def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredArtifact, *,
                          run_id: str, attempt_id: str, api_key_env: str = "RUNWAY_API_KEY",
-                         clock=time.time, transport: httpx.BaseTransport | None = None) -> Submission:
+                         clock=time.time, transport: httpx.BaseTransport | None = None,
+                         runtime: RuntimeEvidence | None = None) -> Submission:
     """Restore, reserve if needed, and send through the checked submission path.
 
     This operator command does not create approval, refresh evidence, or upload
@@ -31,6 +33,8 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
     """
     BudgetLedger._run_id(run_id)
     BudgetLedger._attempt_id(attempt_id)
+    if runtime is not None:
+        runtime.require_identity(output_root, run_id, attempt_id)
     if type(api_key_env) is not str or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", api_key_env) is None:
         raise ValueError("Supply an environment variable name for the API key.")
     checked = read_checked_request(Path(output_root) / run_id, evidence,
@@ -53,7 +57,7 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
                     or reservation["cost_cents"] != checked.frozen.estimated_cents):
                 raise IdempotencyConflict("Saved request does not match the existing reservation.")
             if coordinator.get(attempt_id).state != "RESERVED":
-                return submit_checked(coordinator, checked, output_root, "", transport=transport)
+                return submit_checked(coordinator, checked, output_root, "", transport=transport, runtime=runtime)
         started = run_start.read_run_start(output_root, run_id=run_id)
         if not (started.started_unix <= approval["started_unix"]
                 < approval["deadline_unix"] <= started.deadline_unix):
@@ -65,7 +69,7 @@ def submit_saved_request(output_root: Path, ledger_path: Path, evidence: StoredA
         if reservation is None:
             ledger.reserve(run_id, f"saved-request:{run_id}:{attempt_id}",
                            checked.frozen.payload_sha256, attempt_id=attempt_id)
-        return submit_checked(coordinator, checked, output_root, api_key, transport=transport)
+        return submit_checked(coordinator, checked, output_root, api_key, transport=transport, runtime=runtime)
 
 
 def main(argv=None) -> int:
@@ -80,16 +84,17 @@ def main(argv=None) -> int:
     parser.add_argument("--api-key-env", default="RUNWAY_API_KEY", help="Environment variable name; never the key value.")
     arguments = parser.parse_args(argv)
     try:
+        runtime = RuntimeEvidence(arguments.output_root, arguments.run_id, arguments.attempt_id)
         evidence = StoredArtifact(arguments.check_path, arguments.check_sha256, arguments.check_size)
         result = submit_saved_request(arguments.output_root, arguments.ledger, evidence,
                                       run_id=arguments.run_id, attempt_id=arguments.attempt_id,
-                                      api_key_env=arguments.api_key_env)
+                                      api_key_env=arguments.api_key_env, runtime=runtime)
     except Exception:
         # SDK, storage, and database errors can include sensitive input values.
         print("Submission could not proceed. Check saved evidence, budget, and the API key environment variable.",
               file=sys.stderr)
         return 1
-    print(json.dumps(asdict(result), sort_keys=True))
+    print(json.dumps(asdict(result) | {"runtime": runtime.summary()}, sort_keys=True))
     return 2 if result.state == "SUBMISSION_UNKNOWN" else 0
 
 

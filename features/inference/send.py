@@ -7,11 +7,13 @@ import httpx
 
 from features.inference.frozen import submit_frozen
 from features.inference.preflight import CheckedRequest, PreflightError, _match_fields, _read_record
+from features.inference.runtime import RuntimeEvidence
 from features.inference.submission import Submission, SubmissionCoordinator, SubmissionError
 
 
 def submit_checked(coordinator: SubmissionCoordinator, checked: CheckedRequest,
-                    output_root: Path, api_key: str, *, transport: httpx.BaseTransport | None = None) -> Submission:
+                    output_root: Path, api_key: str, *, transport: httpx.BaseTransport | None = None,
+                    runtime: RuntimeEvidence | None = None) -> Submission:
     """Send once through the coordinator using a verified, current check record.
 
     The trusted application supplies the check and the same provider account key
@@ -23,13 +25,17 @@ def submit_checked(coordinator: SubmissionCoordinator, checked: CheckedRequest,
         coordinator._require_open()
         coordinator.ledger._run_id(checked.run_id)
         coordinator.ledger._attempt_id(checked.attempt_id)
+        if runtime is not None:
+            runtime.require_identity(output_root, checked.run_id, checked.attempt_id)
         with coordinator.ledger._connection() as connection:
             row = connection.execute("SELECT run_id FROM reservations WHERE attempt_id=?", (checked.attempt_id,)).fetchone()
         if row is None or row["run_id"] != checked.run_id:
             raise SubmissionError("Checked request has no matching run reservation.")
         if coordinator.get(checked.attempt_id).state != "RESERVED":
+            if runtime is not None:
+                runtime.bind_existing(coordinator)
             return submit_frozen(coordinator, checked.attempt_id, checked.frozen, output_root, api_key,
-                                 transport=transport)
+                                 transport=transport, runtime=runtime)
         root = Path(output_root) / checked.run_id
 
         def verify_check():
@@ -43,6 +49,8 @@ def submit_checked(coordinator: SubmissionCoordinator, checked: CheckedRequest,
                 "spendingAuthorized": False})
 
         verify_check()
+        if runtime is not None:
+            runtime.bind_checked(coordinator, checked)
         checked.require_current(coordinator.ledger._now())
 
         def before_send():
@@ -50,4 +58,4 @@ def submit_checked(coordinator: SubmissionCoordinator, checked: CheckedRequest,
             coordinator.require_send_allowed(checked.attempt_id, check_current=checked.require_current)
 
         return submit_frozen(coordinator, checked.attempt_id, checked.frozen, output_root, api_key,
-                             transport=transport, before_send=before_send)
+                             transport=transport, before_send=before_send, runtime=runtime)

@@ -191,9 +191,15 @@ class SubmitCommandTests(unittest.TestCase):
                 redirect_stdout(output), redirect_stderr(errors):
             status = submit_module.main(self.arguments())
         self.assertEqual(status, 2)
-        self.assertEqual(json.loads(output.getvalue()), {
+        response = json.loads(output.getvalue())
+        runtime_summary = response.pop("runtime")
+        self.assertEqual(response, {
             "attempt_id": fixtures.ATTEMPT, "state": "SUBMISSION_UNKNOWN",
             "provider_task_id": None, "evidence_sha256": None})
+        self.assertEqual(runtime_summary["issues"], [])
+        self.assertEqual([record["path"] for record in runtime_summary["receipts"]], [
+            f"attempts/{fixtures.ATTEMPT}/runtime/create-context.json",
+            f"attempts/{fixtures.ATTEMPT}/runtime/create-result.json"])
         self.assertEqual(errors.getvalue(), "")
         self.assertNotIn(fixtures.KEY, output.getvalue())
         self.assertEqual(len(self.requests), 1)

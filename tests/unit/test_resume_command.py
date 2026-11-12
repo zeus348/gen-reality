@@ -147,6 +147,8 @@ class ResumeCommandTests(unittest.TestCase):
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["state"], "QUEUED")
+        self.assertEqual(json.loads(result.stdout)["runtime"],
+                         {"receipts": [], "issues": ["CREATE_CONTEXT_MISSING"]})
         self.assertNotIn(KEY, result.stdout + result.stderr)
         self.assertEqual(self.requests, [])
         self.assertEqual(self.reservations(), before)
@@ -248,6 +250,8 @@ class ResumeCommandTests(unittest.TestCase):
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(json.loads(result.stdout)["state"], "SUBMISSION_UNKNOWN")
+        self.assertEqual(json.loads(result.stdout)["runtime"],
+                         {"receipts": [], "issues": ["CREATE_CONTEXT_MISSING"]})
         self.assertEqual(result.stderr, "")
         self.assertNotIn(KEY, result.stdout)
         self.assertEqual(self.reservations(), before)

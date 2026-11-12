@@ -12,6 +12,7 @@ import httpx
 from core.budget import BudgetError, IdempotencyConflict
 from core.storage import publish_bytes
 from features.inference.runway import API_URL, SDK_VERSION, ProviderError, RunwayCreateAdapter, create_arguments
+from features.inference.runtime import RuntimeEvidence
 from features.inference.submission import Submission, SubmissionCoordinator, SubmissionError
 
 
@@ -70,7 +71,8 @@ class FrozenCreate:
 
 def submit_frozen(coordinator: SubmissionCoordinator, attempt_id: str, frozen: FrozenCreate,
                   output_root: Path, api_key: str, *, transport: httpx.BaseTransport | None = None,
-                  before_send: Callable[[], None] | None = None) -> Submission:
+                  before_send: Callable[[], None] | None = None,
+                  runtime: RuntimeEvidence | None = None) -> Submission:
     """Submit matching reserved inputs and publish request evidence before the POST.
 
     Only trusted server code may provide the root, API key, and frozen inputs.
@@ -83,6 +85,8 @@ def submit_frozen(coordinator: SubmissionCoordinator, attempt_id: str, frozen: F
         if row is None:
             raise SubmissionError("Submission has no matching reservation.")
         reservation = coordinator.ledger._reservation(row)
+    if runtime is not None:
+        runtime.require_identity(output_root, reservation.run_id, attempt_id)
     if reservation.payload_sha256 != frozen.payload_sha256:
         raise IdempotencyConflict("Frozen request does not match the reserved payload.")
     if reservation.cost_cents != frozen.estimated_cents:
@@ -99,11 +103,17 @@ def submit_frozen(coordinator: SubmissionCoordinator, attempt_id: str, frozen: F
     def record_request(body):
         if body != expected_body:
             raise ProviderError("SDK request differs from the frozen request.")
-        publish_bytes(root, prefix + "frozen_request.json", record)
-        publish_bytes(root, prefix + "request.json", body)
+        frozen_record = publish_bytes(root, prefix + "frozen_request.json", record)
+        request_record = publish_bytes(root, prefix + "request.json", body)
+        if runtime is not None:
+            runtime.prepare_create(request_record, frozen_record, transport, adapter.http_client)
         if before_send is not None:
             before_send()
 
-    with RunwayCreateAdapter(api_key, record_request=record_request, transport=transport) as adapter:
-        return coordinator.submit_once(attempt_id, lambda: adapter.create_task(
+    with RunwayCreateAdapter(api_key, record_request=record_request, transport=transport,
+            check_response=runtime.observe_create_response if runtime is not None else None) as adapter:
+        result = coordinator.submit_once(attempt_id, lambda: adapter.create_task(
             frozen.video_uri, frozen.prompt, keyframe_uri=frozen.keyframe_uri))
+        if runtime is not None:
+            runtime.finish_create(result)
+        return result
