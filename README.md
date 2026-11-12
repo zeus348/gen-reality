@@ -255,6 +255,35 @@ a standalone SQLite snapshot auditor. It neither selects a latest review nor
 establishes human participation or live provider provenance. The writer still
 checks that a newly bound review time is no later than its trusted current time.
 
+`build_export_inventory` takes an existing open coordinator, output root, trusted
+review-manifest reference, expected run and attempt IDs, and an optional explicit
+scorecard-binding reference. It requires completed output and verifies the saved
+preparation, request, reservation, task, native timing, and selected review before
+publishing one `export/inventories/{SHA256}.json` within the attempt. It needs no
+current clock, fresh provider check, recovery, or provider call. Exact repeats
+reuse the inventory; a corrected selection preserves earlier inventories.
+
+The strict inventory schema permits at most 30 unique payload files. The list
+contains the preparation manifest, all nine frozen files (including both local
+guides), raw output and metadata, the review manifest and selected PNGs, and only
+the explicitly selected binding/card. Paths and roles are sorted, and a reused
+file appears once. Original bytes stay unchanged. There is no directory scan,
+implicit HTML inclusion, or automatic selection of another attempt or scorecard.
+
+The embedded provider summary contains fixed fields and a reserved cost, not an
+actual-charge claim. Exactly four private records have separate hash/size entries:
+the request check, request, frozen request, and provider success response. Their
+bytes, uploaded URIs, and signed output URLs are excluded. References to these
+private records inside bundled manifests do not mean their bytes are included.
+Human/provider provenance remains `NOT_ESTABLISHED`; billing, full-run budget,
+elapsed-time, and recorded-test audits remain `NOT_RUN`, as do both global outcomes.
+
+This operation creates an inventory, not a ZIP. Its `files` list defines future
+ZIP payload members; a future ZIP must also contain the exact inventory bytes as
+`inventory.json`. `totalFileBytes` counts payload bytes without asserting that an
+archive fits the 512 MiB artifact limit. ZIP creation and independent release
+auditing remain separate work.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh

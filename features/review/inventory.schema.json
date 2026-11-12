@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Completed attempt export inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "manifestType", "runId", "attemptId", "mode", "sourceKindDeclared", "files", "selection", "privateEvidenceHashes", "provider", "totalFileBytes", "availability", "visualEffectDemonstrated", "automatedWorkflowComplete"],
+  "properties": {
+    "schemaVersion": {"const": "1.4"},
+    "manifestType": {"const": "completed_attempt_export_inventory"},
+    "runId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "attemptId": {"type": "string", "pattern": "^att-[0-9a-f]{32}$"},
+    "mode": {"enum": ["A", "B"]},
+    "sourceKindDeclared": {"enum": ["clean_camera", "synthetic_fixture"]},
+    "files": {"type": "array", "minItems": 1, "maxItems": 30, "uniqueItems": true, "items": {"$ref": "#/$defs/file"}},
+    "selection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["preparationManifest", "reviewManifest", "scorecardBinding", "scorecard"],
+      "properties": {
+        "preparationManifest": {"$ref": "#/$defs/preparationReference"},
+        "reviewManifest": {"$ref": "#/$defs/reviewReference"},
+        "scorecardBinding": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/bindingReference"}]},
+        "scorecard": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/cardReference"}]}
+      }
+    },
+    "privateEvidenceHashes": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requestCheck", "request", "frozenRequest", "providerSuccess"],
+      "properties": {
+        "requestCheck": {"$ref": "#/$defs/privateRecord"},
+        "request": {"$ref": "#/$defs/privateRecord"},
+        "frozenRequest": {"$ref": "#/$defs/privateRecord"},
+        "providerSuccess": {"$ref": "#/$defs/privateRecord"}
+      }
+    },
+    "provider": {
+      "type": "object", "additionalProperties": false,
+      "required": ["vendor", "model", "route", "sdkVersion", "taskId", "recordedStatus", "payloadSha256", "requestBodySha256", "reservedCents", "completedUnix"],
+      "properties": {
+        "vendor": {"const": "Runway"}, "model": {"const": "aleph2"}, "route": {"const": "POST /v1/video_to_video"},
+        "sdkVersion": {"type": "string", "maxLength": 32, "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "taskId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+        "recordedStatus": {"const": "SUCCEEDED"},
+        "payloadSha256": {"$ref": "#/$defs/sha256"}, "requestBodySha256": {"$ref": "#/$defs/sha256"},
+        "reservedCents": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "completedUnix": {"type": "number", "minimum": 0, "maximum": 253402300799}
+      }
+    },
+    "totalFileBytes": {"type": "integer", "minimum": 1, "maximum": 16106127360},
+    "availability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scorecard", "providerProvenance", "humanProvenance", "actualChargeAudit", "runBudgetAudit", "elapsedBudgetAudit", "recordedTestAudit"],
+      "properties": {
+        "scorecard": {"enum": ["SELECTED", "NOT_SELECTED"]},
+        "providerProvenance": {"const": "NOT_ESTABLISHED"}, "humanProvenance": {"const": "NOT_ESTABLISHED"},
+        "actualChargeAudit": {"const": "NOT_RUN"}, "runBudgetAudit": {"const": "NOT_RUN"},
+        "elapsedBudgetAudit": {"const": "NOT_RUN"}, "recordedTestAudit": {"const": "NOT_RUN"}
+      }
+    },
+    "visualEffectDemonstrated": {"const": "NOT_RUN"},
+    "automatedWorkflowComplete": {"const": "NOT_RUN"}
+  },
+  "allOf": [{
+    "if": {"properties": {"availability": {"properties": {"scorecard": {"const": "SELECTED"}}}}},
+    "then": {"properties": {"selection": {"properties": {"scorecardBinding": {"$ref": "#/$defs/artifact"}, "scorecard": {"$ref": "#/$defs/artifact"}}}}},
+    "else": {"properties": {"selection": {"properties": {"scorecardBinding": {"type": "null"}, "scorecard": {"type": "null"}}}}}
+  }],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "size": {"type": "integer", "minimum": 1, "maximum": 536870912},
+    "payloadPath": {
+      "type": "string", "maxLength": 1024,
+      "pattern": "^attempts/att-[0-9a-f]{32}/(?:manifest\\.json|frozen/(?:source_original\\.(?:mp4|mov)|source_normalized\\.mp4|asset_original\\.png|placement\\.json|config\\.json|prompt\\.txt|inputs\\.json|keyframe_A\\.png|guide_B\\.mp4)|output/(?:raw\\.mp4|metadata\\.json)|review/(?:manifest\\.json|(?:source|guide|raw)/frame-[0-9]{6}\\.png|(?:scorecards|scorecard-bindings)/[0-9a-f]{64}\\.json))$"
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"],
+      "properties": {"path": {"$ref": "#/$defs/payloadPath"}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"$ref": "#/$defs/size"}}
+    },
+    "preparationReference": {"allOf": [{"$ref": "#/$defs/artifact"}, {"properties": {"path": {"pattern": "/att-[0-9a-f]{32}/manifest\\.json$"}}}]},
+    "reviewReference": {"allOf": [{"$ref": "#/$defs/artifact"}, {"properties": {"path": {"pattern": "/review/manifest\\.json$"}}}]},
+    "bindingReference": {"allOf": [{"$ref": "#/$defs/artifact"}, {"properties": {"path": {"pattern": "/review/scorecard-bindings/[0-9a-f]{64}\\.json$"}}}]},
+    "cardReference": {"allOf": [{"$ref": "#/$defs/artifact"}, {"properties": {"path": {"pattern": "/review/scorecards/[0-9a-f]{64}\\.json$"}}}]},
+    "file": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256", "size", "roles"],
+      "properties": {
+        "path": {"$ref": "#/$defs/payloadPath"}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"$ref": "#/$defs/size"},
+        "roles": {"type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": {
+          "enum": ["preparation_manifest", "source_original", "source_normalized", "asset_original", "placement", "configuration", "prompt", "input_declarations", "guide_a", "guide_b", "provider_video_input", "submitted_guide", "raw_output", "raw_metadata", "review_manifest", "source_sample", "guide_sample", "raw_sample", "scorecard_binding", "scorecard"]
+        }}
+      }
+    },
+    "privateRecord": {
+      "type": "object", "additionalProperties": false, "required": ["sha256", "size"],
+      "properties": {"sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 1, "maximum": 1048576}}
+    }
+  }
+}
