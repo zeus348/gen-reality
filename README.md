@@ -179,6 +179,37 @@ and relationship flags, streamed with a 64 MiB encoding limit. It does not hash
 the bare database file or establish authentic billing, provider origin, or an
 acceptance outcome. Changes to unrelated valid rows do not enter this hash.
 
+`core.run_audit.audit_run(snapshot)` checks that immutable snapshot without any
+I/O, current-clock reading, recovery, or writer call. Its frozen report separates
+record consistency, current recorded limits, spending-boundary replay, and
+recorded elapsed checks. Each assessment has a verdict and separate
+`COMPLETE`/`INCOMPLETE` coverage. Missing evidence produces `BLOCKED`; a known
+failure stays `FAIL` even when other evidence is missing. A stale snapshot hash
+is an explicit failure, and the report binds the recomputed hash of the rows
+actually assessed. Malformed or oversized snapshot structures are rejected.
+
+The audit sums integer recorded actual charges plus reserves without recorded
+final charges. A zero charge releases held money but never an attempt. Missing
+final billing does not itself fail conservative accounting. Overquote attempt
+IDs are separate facts: a final charge above its quote can still be within the
+approved dollar cap. Replay fails a later spending boundary after that charge;
+it does not invalidate an earlier valid boundary. Shared journal
+sequence reconstructs those amounts at reservations, claims, and passed send
+gates, including charges between boundaries with equal timestamps. Fixed event
+snapshots and submission links must match their current records. The report
+also retains unknown/in-flight and unresolved-billing attempt IDs, approved
+limits, and boundary facts; it does not duplicate the full captured row graph.
+
+Timing uses `APPROVAL_START`, not the start of the entire experiment. Repeated
+passed gates are allowed; a direct callback with no gate leaves coverage
+incomplete. Nullable or backward charge/result observation times do not reorder
+money. Later polling and completion do not retroactively invalidate a timely
+spending boundary. Retained polling evidence is distinguished from a fresh
+observation. These are consistency checks of declared local records, not proof
+of an actual POST, authentic billing, provider origin, human review, or release
+acceptance. Malformed attempt identifiers are reported without echoing their
+text into issue or summary fields.
+
 `RunwayCreateAdapter` uses the official `runwayml` 5.24.0 SDK. Mode A sends one
 keyframe at zero seconds; Mode B omits `keyframes`. It disables SDK retries and
 HTTP redirects. Its required recorder receives the serialized request body
