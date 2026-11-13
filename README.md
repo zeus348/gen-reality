@@ -223,14 +223,52 @@ Verified final charges replace reserved amounts in the total. Unknown charges
 keep their reservation. The receipt hash and final amount are recorded once;
 any charge above its quote is retained and blocks further spending. A confirmed zero
 charge does not refund an attempt or reopen the elapsed-time limit.
-Reservations alone do not authorize provider calls. The offline CLI does not
-create approvals, record final charges, or call a provider.
+Reservations alone do not authorize provider calls. The preparation CLI does
+not create approvals, record final charges, or call a provider.
 For authority that covers one run, trusted operator code passes `only_run=True`
 to each `approve_run` call on the same dedicated ledger. The approval transaction
 rejects a different previously approved run, even if it expired or was fully
 settled. The default `False` preserves existing multi-run ledger behavior. This
 is a check for that call and ledger, not an authorization registry across ledgers.
 Repeating approval never replaces its original terms or deadline.
+
+The operator can allocate the existing US$10/six-attempt authority to one
+registered server run with:
+
+```sh
+python -m app.approve --state-dir /private/server-state --run-id run-<32-lowercase-hex>
+```
+
+Create `operator-approval.json` in that existing private state directory. The
+file must belong to the operator, have no group/other permissions, and contain
+at most 16 KiB. Its exact fields are:
+
+```json
+{
+  "schemaVersion": "1.4",
+  "manifestType": "local_operator_approval_config",
+  "outputRoot": "/absolute/canonical/server-output-root",
+  "approvedBy": "the operator identity",
+  "priceQuote": {"path": "provider_pricing/<sha256>.json", "sha256": "<sha256>", "size": 1234}
+}
+```
+
+Replace the example values with the existing server root and the exact quote
+record produced by `record_price_quote` under that run. The command verifies
+that quote and its source bytes; the operator must check their pricing facts.
+It fetches no prices and accepts no browser authority. It requires the existing
+registered start and ledger, checks current pricing and the original experiment
+deadline, and uses the atomic one-run guard on that same dedicated ledger.
+It can run while the server owns the coordinator and performs no job recovery.
+
+Exit 0 means a new approval was recorded. Exit 2 reports matching historical
+terms without a clock read, writer, or renewed permission, including expired or
+stopped runs. Exit 1 reports a fixed error code. The selected quote is supporting
+evidence; the ledger stores cost terms, not the original quote hash. The bounded
+ledger precheck checks required tables and column types, not all SQL constraints
+or triggers. The operator must retain ownership of the private database. This
+command creates no cross-ledger authority registry and makes no provider call.
+
 For a new experiment, trusted operator code reads `read_run_start(output_root,
 run_id=...)` and passes its `deadline_unix` to `approve_run` as
 `deadline_unix_cap`. Approval stores the earlier of that cap and its requested
@@ -732,6 +770,8 @@ fractional USD cents up, then adds all additional cents. Totals above US$10 fail
 Decimal arithmetic uses its own context. Quotes expire five minutes after the
 recorded price check and never grant spending authority. Current pricing must
 still be checked by the operator before each paid submission.
+`read_price_quote` verifies the exact canonical saved record and source bytes
+without a clock or publication. It returns historical facts without renewing them.
 
 `read_prepared_attempt` verifies the expected run, attempt, manifest, and all nine
 frozen files. It checks attempt paths, hashes, locked configuration, placement,

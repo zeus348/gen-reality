@@ -137,6 +137,101 @@ def _canonical_directory(path):
     return path
 
 
+def _check_state_files(state_dir, output_root, ledger_path, path, *, allow_missing=False):
+    with _parent_directory(state_dir, [path.name], create=False) as directory:
+        info = os.fstat(directory)
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ServiceError("STATE_UNAVAILABLE")
+    if state_dir.is_relative_to(output_root):
+        raise ServiceError("STATE_UNAVAILABLE")
+    if not stat.S_ISREG(ledger_path.lstat().st_mode):
+        raise ServiceError("STATE_UNAVAILABLE")
+    _require_separate_sqlite_files(path, ledger_path)
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        candidate = Path(str(path) + suffix)
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            if suffix or allow_missing:
+                continue
+            raise
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or info.st_size > MAX_DATABASE_BYTES):
+            raise ServiceError("STATE_UNAVAILABLE")
+
+
+@contextmanager
+def _state_connection(path, *, write=False):
+    connection = sqlite3.connect(path.as_uri() + ("?mode=rw" if write else "?mode=ro"),
+                                 uri=True, timeout=LOCK_TIMEOUT, isolation_level=None)
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_RECORD_BYTES)
+        connection.execute("PRAGMA trusted_schema=OFF")
+        connection.execute("PRAGMA foreign_keys=ON")
+        steps = 0
+
+        def bounded_query():
+            nonlocal steps
+            steps += 1000
+            return steps > 2_000_000
+
+        connection.set_progress_handler(bounded_query, 1000)
+        if write:
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute(f"PRAGMA max_page_count={MAX_DATABASE_BYTES // PAGE_SIZE}")
+            connection.execute("PRAGMA wal_autocheckpoint=64")
+            connection.execute(f"PRAGMA journal_size_limit={MAX_DATABASE_BYTES}")
+        else:
+            connection.execute("PRAGMA query_only=ON")
+        yield connection
+    finally:
+        connection.close()
+
+
+def _inspect_state(connection, owner):
+    expected = {name: ("table", sql) for name, sql in _TABLES.items()}
+    expected.update({name: ("trigger", sql) for name, sql in _TRIGGERS.items()})
+    for table in ("preparation_runs", "preparation_inputs", "preparation_attempts"):
+        expected[f"sqlite_autoindex_{table}_1"] = ("index", None)
+    rows = connection.execute("SELECT name,type,sql FROM sqlite_schema LIMIT ?", (len(expected) + 1,))
+    if {row["name"]: (row["type"], row["sql"]) for row in rows} != expected:
+        raise ServiceError("STATE_UNAVAILABLE")
+    rows = connection.execute("SELECT format_version,output_root,ledger_path "
+                              "FROM preparation_owner LIMIT 2").fetchall()
+    if [tuple(row) for row in rows] != [owner]:
+        raise ServiceError("STATE_UNAVAILABLE")
+    if (connection.execute("PRAGMA page_size").fetchone()[0] != PAGE_SIZE
+            or connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal"):
+        raise ServiceError("STATE_UNAVAILABLE")
+
+
+def read_registered_run_start(state_dir, output_root, ledger_path, *, run_id) -> StoredArtifact:
+    """Read one registered start without startup recovery or a writer connection."""
+    try:
+        check_run_id(run_id)
+        state_dir = _canonical_directory(state_dir)
+        output_root = _canonical_directory(output_root)
+        ledger_path = Path(os.path.abspath(ledger_path))
+        path = state_dir / "preparation.sqlite"
+        owner = (FORMAT, str(output_root), str(ledger_path))
+        _check_state_files(state_dir, output_root, ledger_path, path)
+        with _state_connection(path) as connection:
+            connection.execute("BEGIN")
+            _inspect_state(connection, owner)
+            row = connection.execute(
+                "SELECT start_record FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise ServiceError("RUN_NOT_FOUND")
+            record = reference(decode(row["start_record"]))
+        _check_state_files(state_dir, output_root, ledger_path, path)
+        return record
+    except ServiceError:
+        raise
+    except Exception:
+        raise ServiceError("STATE_UNAVAILABLE") from None
+
+
 class State:
     """Four fixed tables. Never hold a transaction during media work."""
 
@@ -172,26 +267,8 @@ class State:
             raise ServiceError("STATE_UNAVAILABLE") from None
 
     def _check_files(self, *, allow_missing=False):
-        with _parent_directory(self.state_dir, [self.path.name], create=False) as directory:
-            info = os.fstat(directory)
-            if info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise ServiceError("STATE_UNAVAILABLE")
-        if self.state_dir.is_relative_to(self.output_root):
-            raise ServiceError("STATE_UNAVAILABLE")
-        if not stat.S_ISREG(self.ledger_path.lstat().st_mode):
-            raise ServiceError("STATE_UNAVAILABLE")
-        _require_separate_sqlite_files(self.path, self.ledger_path)
-        for suffix in ("", "-wal", "-shm", "-journal"):
-            path = Path(str(self.path) + suffix)
-            try:
-                info = path.lstat()
-            except FileNotFoundError:
-                if suffix or allow_missing:
-                    continue
-                raise
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or info.st_mode & 0o077 or info.st_size > MAX_DATABASE_BYTES):
-                raise ServiceError("STATE_UNAVAILABLE")
+        _check_state_files(self.state_dir, self.output_root, self.ledger_path,
+                           self.path, allow_missing=allow_missing)
 
     @contextmanager
     def connection(self, *, write=False, initialize=False):
@@ -199,47 +276,11 @@ class State:
         if write and not initialize:
             with self.connection() as check:
                 self._inspect(check)
-        connection = sqlite3.connect(self.path.as_uri() + ("?mode=rw" if write else "?mode=ro"),
-                                     uri=True, timeout=LOCK_TIMEOUT, isolation_level=None)
-        try:
-            connection.row_factory = sqlite3.Row
-            connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_RECORD_BYTES)
-            connection.execute("PRAGMA trusted_schema=OFF")
-            connection.execute("PRAGMA foreign_keys=ON")
-            steps = 0
-
-            def bounded_query():
-                nonlocal steps
-                steps += 1000
-                return steps > 2_000_000
-
-            connection.set_progress_handler(bounded_query, 1000)
-            if write:
-                connection.execute("PRAGMA synchronous=FULL")
-                connection.execute(f"PRAGMA max_page_count={MAX_DATABASE_BYTES // PAGE_SIZE}")
-                connection.execute("PRAGMA wal_autocheckpoint=64")
-                connection.execute(f"PRAGMA journal_size_limit={MAX_DATABASE_BYTES}")
-            else:
-                connection.execute("PRAGMA query_only=ON")
+        with _state_connection(self.path, write=write) as connection:
             yield connection
-        finally:
-            connection.close()
 
     def _inspect(self, connection):
-        expected = {name: ("table", sql) for name, sql in _TABLES.items()}
-        expected.update({name: ("trigger", sql) for name, sql in _TRIGGERS.items()})
-        for table in ("preparation_runs", "preparation_inputs", "preparation_attempts"):
-            expected[f"sqlite_autoindex_{table}_1"] = ("index", None)
-        rows = connection.execute("SELECT name,type,sql FROM sqlite_schema LIMIT ?", (len(expected) + 1,))
-        if {row["name"]: (row["type"], row["sql"]) for row in rows} != expected:
-            raise ServiceError("STATE_UNAVAILABLE")
-        rows = connection.execute("SELECT format_version,output_root,ledger_path "
-                                  "FROM preparation_owner LIMIT 2").fetchall()
-        if [tuple(row) for row in rows] != [self.owner]:
-            raise ServiceError("STATE_UNAVAILABLE")
-        if (connection.execute("PRAGMA page_size").fetchone()[0] != PAGE_SIZE
-                or connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal"):
-            raise ServiceError("STATE_UNAVAILABLE")
+        _inspect_state(connection, self.owner)
 
     @contextmanager
     def transaction(self):
