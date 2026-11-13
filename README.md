@@ -26,6 +26,14 @@ until the record is durable. Library applications use `prepare_run_attempt`;
 the lower-level `prepare_attempt` remains an offline primitive without lifecycle
 evidence. Old preparation manifests and files are not rewritten.
 
+Applications that already hold a `NormalizedVideo` and `ValidatedAsset` from the
+existing validators can call `app.prepare.prepare_validated_attempt`. Supply the
+placement, output/run/attempt identities, exact `.mp4` or `.mov` source suffix,
+provenance declarations and prompt. It reuses the same guide compiler and frozen
+layout without rereading original files or normalizing them again. The caller
+must start the experiment clock before its earlier media work; this helper does
+not create lifecycle evidence or authorize spending.
+
 The manifest is an **offline preparation** record. It reports `PREPARED` and
 `LOCAL_PIPELINE_ONLY`; visual and automated generation outcomes remain `NOT_RUN`.
 This CLI does not authorize spending or call a provider. Server primitives for
