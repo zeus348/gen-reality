@@ -29,6 +29,26 @@ class ExportScorecardIntegrity:
     assessment: ScorecardAssessment | None
 
 
+def _check_scorecard_snapshot(snapshot, *, run_id: str, attempt_id: str) -> ExportScorecardIntegrity:
+    """Finish review and selected-card checks on the same verified ZIP bytes."""
+    verified_review = _check_review_snapshot(snapshot, run_id=run_id, attempt_id=attempt_id)
+    selection = snapshot.inventory["selection"]
+    if selection["scorecardBinding"] is None:
+        return ExportScorecardIntegrity(verified_review, "NOT_SELECTED", None, None, None)
+    binding = StoredArtifact(**selection["scorecardBinding"])
+    scorecard = StoredArtifact(**selection["scorecard"])
+    assessed = _assess_bound_card(snapshot.controls[scorecard.path], run_id=run_id, attempt_id=attempt_id)
+    if assessed.record != scorecard:
+        raise ExportScorecardError("Original scorecard bytes differ from the selected record.")
+    review = _parse_review_json(snapshot.controls[verified_review.review.path])
+    native_times = _exact_native_times(snapshot.controls[verified_review.raw_metadata.path])
+    expected = _make_receipt(assessed, verified_review.review, review, native_times=native_times,
+                             completed_unix=snapshot.inventory["provider"]["completedUnix"])
+    if snapshot.controls[binding.path] != _receipt_bytes(expected):
+        raise ExportScorecardError("Selected binding differs from its complete canonical receipt.")
+    return ExportScorecardIntegrity(verified_review, "SELECTED", binding, scorecard, assessed.assessment)
+
+
 def verify_export_scorecard(output_root: Path, archive_ref: StoredArtifact,
                             inventory_ref: StoredArtifact, *, run_id: str,
                             attempt_id: str) -> ExportScorecardIntegrity:
@@ -46,21 +66,6 @@ def verify_export_scorecard(output_root: Path, archive_ref: StoredArtifact,
     try:
         snapshot = _read_verified_archive(output_root, archive_ref, inventory_ref,
             run_id=run_id, attempt_id=attempt_id, include_scorecard=True)
-        verified_review = _check_review_snapshot(snapshot, run_id=run_id, attempt_id=attempt_id)
-        selection = snapshot.inventory["selection"]
-        if selection["scorecardBinding"] is None:
-            return ExportScorecardIntegrity(verified_review, "NOT_SELECTED", None, None, None)
-        binding = StoredArtifact(**selection["scorecardBinding"])
-        scorecard = StoredArtifact(**selection["scorecard"])
-        assessed = _assess_bound_card(snapshot.controls[scorecard.path], run_id=run_id, attempt_id=attempt_id)
-        if assessed.record != scorecard:
-            raise ExportScorecardError("Original scorecard bytes differ from the selected record.")
-        review = _parse_review_json(snapshot.controls[verified_review.review.path])
-        native_times = _exact_native_times(snapshot.controls[verified_review.raw_metadata.path])
-        expected = _make_receipt(assessed, verified_review.review, review, native_times=native_times,
-                                 completed_unix=snapshot.inventory["provider"]["completedUnix"])
-        if snapshot.controls[binding.path] != _receipt_bytes(expected):
-            raise ExportScorecardError("Selected binding differs from its complete canonical receipt.")
-        return ExportScorecardIntegrity(verified_review, "SELECTED", binding, scorecard, assessed.assessment)
+        return _check_scorecard_snapshot(snapshot, run_id=run_id, attempt_id=attempt_id)
     except Exception:
         raise ExportScorecardError("Archived scorecard binding could not be verified for this attempt.") from None
