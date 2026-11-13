@@ -171,23 +171,52 @@ class LocalBootstrapTests(unittest.TestCase):
     def test_static_routes_and_security_headers_do_not_expose_authority(self):
         config = self.config()
         app = server.create_app(config)
+        expected_policy = {
+            "default-src": ["'none'"], "script-src": ["'self'"], "connect-src": ["'self'"],
+            "base-uri": ["'none'"], "form-action": ["'none'"], "frame-ancestors": ["'none'"],
+            "img-src": ["'self'"], "media-src": ["'self'"], "style-src": ["'self'"],
+        }
+
+        def check_headers(response):
+            self.assertIn("no-store", response.headers["cache-control"])
+            self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+            self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+            parts = [part.split() for part in response.headers["content-security-policy"].split(";") if part.strip()]
+            self.assertEqual(len(parts), len(expected_policy))
+            self.assertEqual({part[0]: part[1:] for part in parts}, expected_policy)
+
         with self.client(app, config) as client:
             token = config.token_path.read_text().strip()
-            for path in ("/", "/app.js", "/session"):
+            for path in ("/", "/app.js", "/preparation.js", "/preparation.css", "/session", "/prepare"):
                 with self.subTest(path=path):
                     response = client.get(path)
-                    self.assertEqual(response.status_code, 401 if path == "/session" else 200)
-                    self.assertIn("no-store", response.headers["cache-control"])
-                    self.assertEqual(response.headers["x-content-type-options"], "nosniff")
-                    self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+                    if path in ("/session", "/prepare"):
+                        self.error(response, 401, "SESSION_REQUIRED")
+                    else:
+                        self.assertEqual(response.status_code, 200)
+                    check_headers(response)
                     for private in (token, str(config.state_dir), str(config.output_root), "RUNWAY_API_KEY"):
                         self.assertNotIn(private, response.text)
-            for path in ("/openapi.json", "/docs", "/redoc", "/attempts"):
+            self.assertEqual(client.get("/preparation.js").headers["content-type"].split(";")[0], "text/javascript")
+            self.assertEqual(client.get("/preparation.css").headers["content-type"].split(";")[0], "text/css")
+            for path in ("/openapi.json", "/docs", "/redoc", "/attempts", "/preparation.html", "/static/preparation.html"):
                 response = client.get(path)
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(set(response.json()), {"error"})
             self.error(client.get("/runs"), 405, "METHOD_NOT_ALLOWED")
             self.assertEqual(client.put("/session", headers={"Origin": config.origin}).status_code, 405)
+            self.assertEqual(self.login(client, config).status_code, 200)
+            response = client.get("/prepare")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+            self.assertEqual(response.content, (Path(server.__file__).parent / "static/preparation.html").read_bytes())
+            check_headers(response)
+            for private in (token, str(config.state_dir), str(config.output_root)):
+                self.assertNotIn(private, response.text)
+            cookie = self.cookie(client)
+            csrf = self.session(client).json()["csrfToken"]
+            self.assertEqual(client.delete("/session", headers={"Origin": config.origin, "X-CSRF-Token": csrf}).status_code, 200)
+            self.error(client.get("/prepare", headers={"Cookie": cookie}), 401, "SESSION_REQUIRED")
 
     def test_host_headers_are_exact_and_checked_before_cookie_decode(self):
         config = self.config()

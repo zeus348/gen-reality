@@ -24,6 +24,7 @@ SECURITY_HEADERS = {
     "referrer-policy": "no-referrer",
     "content-security-policy": (
         "default-src 'none'; script-src 'self'; connect-src 'self'; "
+        "img-src 'self'; media-src 'self'; style-src 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     ),
 }

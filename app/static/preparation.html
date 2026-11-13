@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generative Reality — Prepare local guides</title>
+  <link rel="stylesheet" href="/preparation.css">
+  <script src="/preparation.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Generative Reality · Local preparation</p>
+      <h1>Prepare local guides</h1>
+      <p>Upload a video and a transparent PNG. Place the asset, then create both guides.</p>
+      <a href="/">Operator session</a>
+    </header>
+
+    <section aria-labelledby="run-heading">
+      <h2 id="run-heading">1. Choose inputs</h2>
+      <div class="actions">
+        <button data-testid="start-run" type="button" disabled>Start local run</button>
+        <button data-testid="refresh-run" type="button" disabled>Refresh run</button>
+      </div>
+      <p data-testid="run-id">No local run selected.</p>
+      <p data-testid="run-status" role="status" aria-live="polite">Checking the operator session…</p>
+      <a data-testid="sign-in-again" href="/" hidden>Sign in again</a>
+      <div class="input-grid">
+        <fieldset data-testid="source-controls" disabled>
+          <legend>Source video</legend>
+          <label for="source-file">MP4 or MOV file</label>
+          <input id="source-file" data-testid="source-file" type="file" accept=".mp4,.mov,video/mp4,video/quicktime">
+          <label for="source-kind">Source type</label>
+          <select id="source-kind" data-testid="source-kind">
+            <option value="">Choose a source type</option>
+            <option value="clean_camera">Camera clip</option>
+            <option value="synthetic_fixture">Test fixture</option>
+          </select>
+          <label class="check"><input data-testid="clean-source" type="checkbox"> This is a clean, fixed-camera clip</label>
+          <button data-testid="upload-source" type="button">Upload source</button>
+          <p data-testid="selected-source">No source selected.</p>
+        </fieldset>
+        <fieldset data-testid="asset-controls" disabled>
+          <legend>Transparent PNG</legend>
+          <label for="asset-file">PNG file</label>
+          <input id="asset-file" data-testid="asset-file" type="file" accept=".png,image/png">
+          <label class="check"><input data-testid="non-human" type="checkbox"> This asset is not human</label>
+          <button data-testid="upload-asset" type="button">Upload PNG</button>
+          <p data-testid="selected-asset">No PNG selected.</p>
+        </fieldset>
+      </div>
+    </section>
+
+    <section aria-labelledby="placement-heading">
+      <h2 id="placement-heading">2. Place the asset</h2>
+      <p>Drag the asset or enter its position and height. Changes stay in this draft until you save.</p>
+      <p>The canvas is a placement aid. Check the saved preview before creating guides.</p>
+      <canvas data-testid="placement-canvas" width="1280" height="720"
+              aria-label="Placement aid. Use the position and height fields below for keyboard control."></canvas>
+      <fieldset data-testid="placement-controls" disabled>
+        <legend>Placement draft</legend>
+        <div class="coordinate-grid">
+          <label for="position-u">Horizontal position (0 to 1)
+            <input id="position-u" data-testid="position-u" type="number" min="0" max="1" step="any" value="0.5">
+          </label>
+          <label for="position-v">Vertical position (0 to 1)
+            <input id="position-v" data-testid="position-v" type="number" min="0" max="1" step="any" value="0.5">
+          </label>
+          <label for="height-number">Height (fraction of frame)
+            <input id="height-number" data-testid="height-number" type="number" min="0" max="1" step="any" value="0.25">
+          </label>
+        </div>
+        <label for="height-range">Adjust height</label>
+        <input id="height-range" data-testid="height-range" type="range" min="0.001" max="1" step="0.001" value="0.25">
+        <p data-testid="draft-status">Save this draft before creating guides.</p>
+        <button data-testid="save-placement" type="button" disabled>Save placement</button>
+      </fieldset>
+      <h3>Saved placement preview</h3>
+      <p data-testid="saved-preview-status">No placement has been saved.</p>
+      <img data-testid="saved-preview" class="frame" alt="Exact saved placement from the local server" hidden>
+    </section>
+
+    <section aria-labelledby="guides-heading">
+      <h2 id="guides-heading">3. Create local guides</h2>
+      <button data-testid="create-guides" type="button" disabled>Create A and B guides</button>
+      <label for="guide-history">Saved guide history</label>
+      <select id="guide-history" data-testid="guide-history" disabled>
+        <option value="">No completed guides</option>
+      </select>
+      <h3>Mode A: first-frame guide</h3>
+      <img data-testid="keyframe-guide" class="frame" alt="Mode A first-frame guide" hidden>
+      <h3>Mode B: full guide</h3>
+      <video data-testid="video-guide" class="frame" controls preload="metadata" hidden
+             aria-label="Mode B full guide"></video>
+    </section>
+  </main>
+</body>
+</html>

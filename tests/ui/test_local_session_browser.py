@@ -27,6 +27,12 @@ def _server_sources():
             for name in ("app.local_session", "app.server")}
 
 
+def _static_sources():
+    """Supply only the fixed served assets to the child fault check."""
+    return {name: (PROJECT_ROOT / "app" / "static" / name).read_text(encoding="utf-8")
+            for name in ("login.html", "login.js", "preparation.html", "preparation.js", "preparation.css")}
+
+
 _CHILD_START = """
 import importlib.util
 import json
@@ -36,8 +42,26 @@ import sys
 root = Path(sys.argv[1])
 arguments = sys.argv[2:]
 sys.path.insert(0, str(root))
-sources = json.load(sys.stdin)
+payload = json.load(sys.stdin)
+sources = payload["sources"]
 import app
+
+# Substitute only these fixed text assets; all other file reads remain real.
+assets = {str(root / "app" / "static" / name): payload["static"][name]
+          for name in ("login.html", "login.js", "preparation.html", "preparation.js", "preparation.css")}
+read_text, read_bytes = Path.read_text, Path.read_bytes
+
+def static_text(path, *arguments, **keywords):
+    if str(path) in assets:
+        return assets[str(path)]
+    return read_text(path, *arguments, **keywords)
+
+def static_bytes(path, *arguments, **keywords):
+    if str(path) in assets:
+        return assets[str(path)].encode("utf-8")
+    return read_bytes(path, *arguments, **keywords)
+
+Path.read_text, Path.read_bytes = static_text, static_bytes
 
 name = "app.local_session"
 filename = root / "app" / "local_session.py"
@@ -80,7 +104,7 @@ def _wait_for_server(process, port, token_file):
 @contextmanager
 def _running_server(state_dir, output_root):
     """Start a bounded child with the real CLI options and release it on failure."""
-    sources = _server_sources()
+    payload = {"sources": _server_sources(), "static": _static_sources()}
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -91,13 +115,15 @@ def _running_server(state_dir, output_root):
     environment = os.environ.copy()
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["PYTHONUNBUFFERED"] = "1"
-    with TemporaryFile() as logs:
+    with TemporaryDirectory(prefix="local-server-child-", dir=state_dir.parent) as child_folder, TemporaryFile() as logs:
+        environment["TMPDIR"] = child_folder
         process = subprocess.Popen(arguments, cwd=PROJECT_ROOT, env=environment,
-                                   stdin=subprocess.PIPE, stdout=logs, stderr=subprocess.STDOUT)
+                                   stdin=subprocess.PIPE, stdout=logs, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
         server = {"origin": f"http://127.0.0.1:{port}",
                   "token_file": state_dir / "operator-login.txt", "logs": b""}
         try:
-            process.stdin.write(json.dumps(sources).encode("utf-8"))
+            process.stdin.write(json.dumps(payload).encode("utf-8"))
             process.stdin.close()
             _wait_for_server(process, port, server["token_file"])
             yield server
@@ -154,6 +180,10 @@ class LocalSessionBrowserTests(unittest.TestCase):
                         self.assertEqual(response.status, 200)
                         status = page.get_by_test_id("session-status")
                         expect(status).to_have_text("Not signed in.")
+                        prepare_link = page.get_by_test_id("prepare-link")
+                        expect(prepare_link).to_have_count(1)
+                        expect(prepare_link).to_have_attribute("href", "/prepare")
+                        expect(prepare_link).to_be_hidden()
                         try:
                             page.get_by_test_id("login-token").fill(token)
                         except PlaywrightError:
@@ -161,6 +191,7 @@ class LocalSessionBrowserTests(unittest.TestCase):
                             raise AssertionError("The operator login field was unavailable.") from None
                         page.get_by_test_id("login-button").click()
                         expect(status).to_have_text("Signed in.")
+                        expect(prepare_link).to_be_visible()
                         session = page.evaluate("""async () => {
                             const response = await fetch('/session', {signal: AbortSignal.timeout(5000)});
                             return {status: response.status, body: await response.json()};
@@ -177,8 +208,10 @@ class LocalSessionBrowserTests(unittest.TestCase):
                         self.assertEqual(cookies[0]["path"], "/")
                         page.reload(wait_until="domcontentloaded")
                         expect(status).to_have_text("Signed in.")
+                        expect(prepare_link).to_be_visible()
                         page.get_by_test_id("logout-button").click()
                         expect(status).to_have_text("Not signed in.")
+                        expect(prepare_link).to_be_hidden()
                         denied = page.evaluate("""async () => {
                             const response = await fetch('/session', {signal: AbortSignal.timeout(5000)});
                             return {status: response.status, body: await response.json()};

@@ -139,6 +139,9 @@ def create_app(config: LocalServerConfig) -> FastAPI:
         asset_root = Path(__file__).parent / "static"
         page = (asset_root / "login.html").read_text(encoding="utf-8")
         script = (asset_root / "login.js").read_bytes()
+        preparation_page = (asset_root / "preparation.html").read_text(encoding="utf-8")
+        preparation_script = (asset_root / "preparation.js").read_bytes()
+        preparation_style = (asset_root / "preparation.css").read_bytes()
     except Exception:
         raise LocalServerError("Local server configuration could not be loaded.") from None
     signing_key = secrets.token_hex(32)
@@ -210,6 +213,21 @@ def create_app(config: LocalServerConfig) -> FastAPI:
     @app.get("/app.js")
     async def login_script():
         return Response(script, media_type="text/javascript")
+
+    @app.get("/prepare", response_class=HTMLResponse)
+    async def preparation_page_route(request: Request):
+        error = local_session.require_session(request)
+        if error is not None:
+            return error
+        return HTMLResponse(preparation_page)
+
+    @app.get("/preparation.js")
+    async def preparation_script_route():
+        return Response(preparation_script, media_type="text/javascript")
+
+    @app.get("/preparation.css")
+    async def preparation_style_route():
+        return Response(preparation_style, media_type="text/css")
 
     @app.post("/session")
     async def login(request: Request):

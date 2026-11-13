@@ -4,12 +4,14 @@ const form = document.querySelector("#login-form");
 const tokenInput = document.querySelector("[data-testid=login-token]");
 const statusText = document.querySelector("[data-testid=session-status]");
 const logoutButton = document.querySelector("[data-testid=logout-button]");
+const prepareLink = document.querySelector("[data-testid=prepare-link]");
 let csrfToken = null;
 
 function showSession(signedIn) {
   statusText.textContent = signedIn ? "Signed in." : "Not signed in.";
   form.hidden = signedIn;
   logoutButton.hidden = !signedIn;
+  prepareLink.hidden = !signedIn;
   if (!signedIn) csrfToken = null;
 }
 
