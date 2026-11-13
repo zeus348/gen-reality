@@ -282,6 +282,25 @@ and billing. A different idempotency key or run cannot claim it. Reusing the key
 with a different attempt ID fails. Custom offline IDs must use this standard
 format before they can be reserved. Omitting the ID retains generated-ID behavior.
 
+`ProviderIntents` uses the existing coordinator and preparation service to save
+one provider-operation identity on the same ledger. New admission verifies the
+registered historical preparation and requires an existing approval. It stores
+only the SHA-256 of a 1..128-byte printable ASCII client key (no spaces), the
+exact manifest, and one selected mode. A prepared attempt can have only one
+key/mode binding. A different paid attempt needs a new prepared attempt.
+
+Matching duplicates return the stored binding before any draft/media read or
+freshness check. The stable reservation key is
+`provider-intent-v1:<run_id>:<key_sha256>` on every later path. The input digest
+uses sorted compact JSON with `formatVersion=provider-intent-1`, `model=aleph2`,
+`runId`, `attemptId`, `mode`, and the exact `preparation` path/hash/size.
+One verified checked-request reference can be attached once; its run, attempt,
+mode, preparation, prompt and source kind must match. Expired evidence is retained
+without being refreshed. This store creates no approval, reservation, upload,
+provider call or recovery action. Its fixed table does not change existing
+financial records. Later submission must still pass all existing spending and
+freshness gates and verify any pre-existing reservation's identity.
+
 `SubmissionCoordinator` commits `SUBMITTING` before calling a trusted adapter.
 It rechecks the run limits and permits one create call per reservation. The
 adapter must disable its own retries. A timeout, invalid task ID, or process
