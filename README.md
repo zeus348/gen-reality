@@ -824,3 +824,35 @@ process group on a limit and records incomplete evidence. These limits bound
 normal test execution and retained evidence; they do not isolate approved test
 code from the operator's machine. Cleanup also stops the child group when the
 leader exits before its descendants or the runner is interrupted.
+
+`qa.recorded_test_audit.audit_recorded_tests` checks one recorded execution
+without reading files or running commands. Its trusted `ApprovedTestContext`
+contains the run ID, independently approved source hash and size, fixed registry
+hash, and exact run-record reference retained by the operator. Imported JSON
+cannot grant that authority. The later file loader must also verify the retained
+source ZIP against that approved identity; this pure audit checks its references.
+
+Supply immutable `TestRecord` bytes for the run, registry, and three fixed
+`SuiteRecords`. The audit checks their complete reference graph, fixed commands
+and tool pins, raw phases and subtests, normalized cases, and JUnit identities
+and statuses. It preserves the historical report formats. All three suites are
+required; a missing suite remains incomplete while verified results from the
+other suites remain visible. Failed tests and source changes still fail when
+other evidence is missing. Skipped, expected-failure, empty, and missing cases
+cannot count as passed coverage.
+
+The code-owned P0 policy lists exact test nodes and explicit missing clauses.
+T006 also needs its single recorded codec metric line with all five regions,
+120 frames, 919,552 pixels per frame, two-pixel edge exclusion, PSNR at least
+30 dB, and SSIM at least 0.95. Infinite positive PSNR denotes zero error and is
+returned as `lossless=True` with no finite PSNR value. The fixed policy hash
+binds these thresholds and node requirements. Passing viewer tests do not
+complete the full browser workflow. Live output and actual human review remain
+separate external clauses; this audit produces no release or visual verdict.
+
+Inputs contain at most 20 records: two top-level records and six per suite.
+Receipts are limited to 64 KiB, the registry to 16 KiB, streams to 4 MiB each,
+and reports to 32 MiB each, within a 320 MiB total. Empty stdout and stderr are
+valid. Results contain frozen counts, assessments, fixed issue codes, references,
+and codec measurements. They do not expose captured text, unknown test names,
+recorded executable paths, or private tool output.
