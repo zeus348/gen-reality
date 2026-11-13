@@ -45,6 +45,31 @@ Use Python 3.11 or later. Install the Python dependencies:
 python -m pip install -r requirements.txt
 ```
 
+The local server currently provides operator sign-in only:
+
+```sh
+mkdir -m 700 "$HOME/.gen-reality-local"
+python -m app.server --state-dir "$HOME/.gen-reality-local" --output-root runs --port 8765
+```
+
+Open the printed `http://127.0.0.1:8765` address. Read the token from the private
+`operator-login.txt` file printed by the server, and enter it in the login form.
+The token never belongs in a URL. The state directory must exist, be private to
+the operator, and remain outside the output tree. Ports must be 1024 to 65535.
+The process uses one coordinator and one loopback origin; it does not serve run
+files or grant budget authority. Startup can recover an abandoned `SUBMITTING`
+job as `SUBMISSION_UNKNOWN`, with its reserve held. Restart rotates the token and
+invalidates earlier sessions. Sign-out or a new login revokes the current session.
+
+The session cookie is signed, HttpOnly, SameSite Strict, and valid for one hour.
+It contains no provider key or budget approval. The local HTTP endpoint requires
+the exact Host and write Origin, CSRF on sign-out, and a bounded JSON login body.
+No provider operation, upload, run creation, approval, or full workflow acceptance
+is available through these routes yet. Test the bootstrap with
+`python -m pytest tests/integration -m 'not live_provider'`; the optional
+`tests/ui/test_local_session_browser.py` test also needs the pinned Playwright
+package and a local Chromium browser. These tests establish local sign-in only.
+
 Load the default configuration, or pass a path to a JSON file:
 
 ```python
