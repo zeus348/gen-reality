@@ -1,0 +1,3 @@
+# Fixed offline test runner. Application and optional browser requirements remain separate.
+pytest==9.2.0
+pytest-reportlog==1.0.0

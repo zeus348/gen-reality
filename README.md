@@ -731,3 +731,44 @@ checks page behavior; it does not perform the human acceptance review.
 python -m pip install -r requirements-ui.txt
 GEN_REALITY_BROWSER_BIN=/usr/bin/chromium python -m unittest discover -s tests/ui -v
 ```
+
+Record offline test evidence from an approved source ZIP with the fixed test
+runner. Install `requirements-test.txt` in the same environment as the normal
+application dependencies. UI tests also need `requirements-ui.txt` and Chromium.
+The PRD commands `python -m pytest tests/unit`,
+`python -m pytest tests/integration -m 'not live_provider'`, and
+`python -m pytest tests/ui` use the existing tests. The integration directory is
+not yet present; its recorded result remains `SUITE_MISSING`.
+
+```sh
+python -m qa.record_tests --source-root /private/approved-source \
+  --source-path source.zip --source-sha256 APPROVED_SHA256 --source-size ZIP_SIZE \
+  --evidence-root /private/qa-evidence --run-id RUN_ID
+```
+
+The operator must approve the source bytes and retain their hash before running
+this command. It executes the selected source; it is not a sandbox for uploads.
+Each fixed suite receives a fresh extraction. Use `--suite unit`,
+`--suite integration_offline`, or `--suite ui` to select suites explicitly;
+repeat the option to select more than one. A missing, empty, failed, skipped, or
+incomplete suite does not prevent the other requested suites from running.
+
+The returned JSON identifies an immutable run record below
+`/private/qa-evidence/RUN_ID`. It links the exact source ZIP, fixed registry,
+command arguments, tool versions, process results, bounded stdout and stderr,
+JUnit XML, raw pytest events, and individual phase and subtest facts. Passing
+test output, including T006 codec measurements, is retained. Source changes and
+incomplete reports are explicit issues. Parent test identities must agree
+between JUnit and the event log. Exit code 0 requires every requested
+suite to execute with exit code 0 and no issues; it does not establish PRD
+coverage, live provider provenance, human approval, or release readiness. The
+registry identifies the current browser test as viewer-only evidence. Retain
+the returned references in trusted operator records for the later QA audit.
+
+The runner accepts a source ZIP up to 32 MiB with 1,024 regular files, 8 MiB per
+file, and 64 MiB expanded total. Each suite has a 20-minute process limit,
+4 MiB per output stream, and 32 MiB per retained report. It kills the child
+process group on a limit and records incomplete evidence. These limits bound
+normal test execution and retained evidence; they do not isolate approved test
+code from the operator's machine. Cleanup also stops the child group when the
+leader exits before its descendants or the runner is interrupted.
