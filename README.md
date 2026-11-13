@@ -78,6 +78,29 @@ is available through these routes yet. Test the bootstrap with
 `tests/ui/test_local_session_browser.py` test also needs the pinned Playwright
 package and a local Chromium browser. These tests establish local sign-in only.
 
+The server lifespan also owns an internal `app.preparation.PreparationService`
+using the same coordinator. Its private `preparation.sqlite` is bound to the
+output root and ledger; it does not approve runs or reserve money. `create_run`
+saves the original experiment start before imports. `get_run`, `set_placement`,
+and the three fixed media operations return immutable selection values. Each
+edit requires the current revision. A successful guide selection increments
+that revision; a guide completed after another edit remains in history without
+replacing the current selection. Prior media and attempt files stay unchanged.
+
+Enter `media_operation(run_id, expected_revision=...)` before reading an upload
+body or guide request. It rejects busy or stale work before yielding a one-use
+handle for `import_source`, `import_asset`, or `build_guides`. Imports reuse the
+existing validators and save hash-verified original/validated bytes; guide builds
+reuse those inputs and `prepare_validated_attempt`. Cancellation cannot release
+the slot or remove staging while its worker is still running. `close` drains
+submitted work before the coordinator closes. A request still receiving bytes
+owns its staging until it cancels or yields another chunk; after close it cannot
+submit a worker. The later HTTP adapter must bound its receive time.
+
+Restart marks unfinished `BUILDING` attempts `INTERRUPTED`, retains all files,
+and does not adopt or render them again. A later explicit build uses a new attempt
+ID. There are no preparation HTTP routes or browser placement controls yet.
+
 Load the default configuration, or pass a path to a JSON file:
 
 ```python
