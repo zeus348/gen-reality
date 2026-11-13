@@ -101,6 +101,18 @@ Restart marks unfinished `BUILDING` attempts `INTERRUPTED`, retains all files,
 and does not adopt or render them again. A later explicit build uses a new attempt
 ID. There are no preparation HTTP routes or browser placement controls yet.
 
+The internal service can also return a fixed `LocalMedia` value containing bytes,
+MIME type and their SHA-256. Await `preview(run_id, expected_revision=..., role=...)`
+for `source`, `asset` or `placement`; it uses the selected revision's exact first
+normalized frame, original RGBA PNG, or a composition made with its saved
+placement. Await
+`prepared_media(run_id, attempt_id, role=...)` for the unchanged `keyframe-a` or
+`guide-b` from a completed attempt, independent of later draft edits. Both reads
+share the existing media slot and cancellation/shutdown ownership. They publish
+nothing and do not change revisions. PNG responses are limited to 32 MiB and
+guide videos to 512 MiB. Source/placement previews require normalized video within
+the existing extractor's 256 MiB input limit; larger cache entries are rejected.
+
 Load the default configuration, or pass a path to a JSON file:
 
 ```python

@@ -4,6 +4,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
+from hashlib import sha256
+from io import BytesIO
 import os
 from pathlib import Path
 import re
@@ -12,17 +14,43 @@ from threading import BoundedSemaphore, Event, RLock
 import time
 from uuid import uuid4
 
+from PIL import Image
+
 from app import preparation_media, preparation_state
 from app.preparation_media import AssetSelection, SourceSelection
 from app.preparation_state import ServiceError
 from app.prepare import prepare_validated_attempt
 from core import run_start
-from core.storage import StoredArtifact
+from core.storage import MAX_ARTIFACT_BYTES, StoredArtifact, read_verified
 from features.asset.ingest import AssetError, MAX_FILE_BYTES, load_asset
+from features.guidance.keyframe import compose_frame
 from features.guidance.video import DEFAULT_PROMPT
 from features.inference.prepared import read_prepared_attempt
 from features.media.ingest import MAX_INPUT_BYTES, MediaError, normalize_video
+from features.output.extract import extract_frame_png
+from features.output.validate import MAX_RAW_BYTES
 from features.placement.math import Placement
+
+
+MAX_PREVIEW_PNG_BYTES = MAX_FILE_BYTES
+MAX_PREVIEW_VIDEO_BYTES = MAX_ARTIFACT_BYTES
+MAX_PREVIEW_SOURCE_BYTES = MAX_RAW_BYTES
+
+
+@dataclass(frozen=True)
+class LocalMedia:
+    contents: bytes
+    media_type: str
+    sha256: str
+
+
+def _local_media(contents, media_type):
+    if media_type not in ("image/png", "video/mp4"):
+        raise ServiceError("STATE_UNAVAILABLE")
+    limit = MAX_PREVIEW_PNG_BYTES if media_type == "image/png" else MAX_PREVIEW_VIDEO_BYTES
+    if type(contents) is not bytes or not 0 < len(contents) <= limit:
+        raise ServiceError("STATE_UNAVAILABLE")
+    return LocalMedia(contents, media_type, sha256(contents).hexdigest())
 
 
 @dataclass(frozen=True)
@@ -199,12 +227,21 @@ class PreparationService:
         except Exception:
             raise ServiceError("STATE_UNAVAILABLE") from None
 
-    @asynccontextmanager
-    async def media_operation(self, run_id, *, expected_revision):
+    def _acquire_media(self):
         with self._mutex:
             self._require_open()
             if not self._slot.acquire(blocking=False):
                 raise ServiceError("MEDIA_BUSY")
+
+    def _release_media(self, operation):
+        if operation is None:
+            self._slot.release()
+        else:
+            operation._exit()
+
+    @asynccontextmanager
+    async def media_operation(self, run_id, *, expected_revision):
+        self._acquire_media()
         operation = None
         try:
             preparation_state.check_revision(expected_revision)
@@ -219,10 +256,84 @@ class PreparationService:
         except Exception:
             raise ServiceError("STATE_UNAVAILABLE") from None
         finally:
-            if operation is None:
-                self._slot.release()
-            else:
-                operation._exit()
+            self._release_media(operation)
+
+    async def preview(self, run_id, *, expected_revision, role) -> LocalMedia:
+        """Return pixels from one captured draft revision without publishing files."""
+        if type(role) is not str or role not in ("source", "asset", "placement"):
+            raise ServiceError("INVALID_INPUT")
+        async with self.media_operation(run_id, expected_revision=expected_revision) as operation:
+            operation._take()
+            required = {"source": ("source_id",), "asset": ("asset_id",),
+                        "placement": ("source_id", "asset_id", "placement")}[role]
+            if any(operation._snapshot[name] is None for name in required):
+                raise ServiceError("INPUT_REQUIRED")
+            return await operation._submit(self._preview_media, role)
+
+    async def prepared_media(self, run_id, attempt_id, *, role) -> LocalMedia:
+        """Read a saved completed attempt independently of the current draft."""
+        if (type(role) is not str or role not in ("keyframe-a", "guide-b")
+                or type(attempt_id) is not str or re.fullmatch(r"att-[0-9a-f]{32}", attempt_id) is None):
+            raise ServiceError("INVALID_INPUT")
+        self._acquire_media()
+        operation = None
+        try:
+            snapshot = self._snapshot(run_id)
+            self._prepared_row(snapshot, attempt_id)
+            operation = _MediaOperation(self, snapshot)
+            operation._take()
+            return await operation._submit(self._read_prepared_media, attempt_id, role)
+        except ServiceError:
+            raise
+        except Exception:
+            raise ServiceError("STATE_UNAVAILABLE") from None
+        finally:
+            self._release_media(operation)
+
+    @staticmethod
+    def _prepared_row(snapshot, attempt_id):
+        row = next((row for row in snapshot["attempts"] if row["attempt_id"] == attempt_id), None)
+        if row is None:
+            raise ServiceError("ATTEMPT_NOT_FOUND")
+        if row["status"] != "PREPARED" or row["manifest"] is None:
+            raise ServiceError("INPUT_REQUIRED")
+        return row
+
+    def _preview_media(self, snapshot, role):
+        selected = self._selection(snapshot)
+        root = self.output_root / selected.run_id
+        if role == "asset":
+            if selected.asset.original.size > MAX_PREVIEW_PNG_BYTES:
+                raise ServiceError("STATE_UNAVAILABLE")
+            _, asset = preparation_media.load_asset(root, selected.run_id, selected.asset.input_id,
+                                                    selected.asset.record, with_bytes=True)
+            return _local_media(asset.original_bytes, "image/png")
+        if selected.source.normalized.size > MAX_PREVIEW_SOURCE_BYTES:
+            raise ServiceError("STATE_UNAVAILABLE")
+        _, video = preparation_media.load_source(root, selected.run_id, selected.source.input_id,
+                                                 selected.source.record, with_bytes=True)
+        frame_png = extract_frame_png(video.video_bytes, 0, width=1280, height=720, frame_count=120)
+        if role == "source":
+            return _local_media(frame_png, "image/png")
+        _, asset = preparation_media.load_asset(root, selected.run_id, selected.asset.input_id,
+                                                selected.asset.record, with_bytes=True)
+        with Image.open(BytesIO(frame_png), formats=["PNG"]) as frame:
+            frame.load()
+            result = compose_frame(frame, asset, selected.placement)
+            with BytesIO() as output:
+                result.save(output, format="PNG")
+                return _local_media(output.getvalue(), "image/png")
+
+    def _read_prepared_media(self, snapshot, attempt_id, role):
+        row = self._prepared_row(snapshot, attempt_id)
+        manifest = preparation_state.reference(preparation_state.decode(row["manifest"]))
+        root = self.output_root / snapshot["run_id"]
+        prepared = read_prepared_attempt(root, manifest, run_id=snapshot["run_id"], attempt_id=attempt_id)
+        record = prepared.keyframe_a if role == "keyframe-a" else prepared.guide_b
+        limit = MAX_PREVIEW_PNG_BYTES if role == "keyframe-a" else MAX_PREVIEW_VIDEO_BYTES
+        if record.size > limit:
+            raise ServiceError("STATE_UNAVAILABLE")
+        return _local_media(read_verified(root, record), "image/png" if role == "keyframe-a" else "video/mp4")
 
     def _import_source(self, snapshot, path, source_suffix, clean_source, source_kind):
         try:
