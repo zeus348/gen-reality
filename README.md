@@ -53,7 +53,7 @@ Use Python 3.11 or later. Install the Python dependencies:
 python -m pip install -r requirements.txt
 ```
 
-The local server currently provides operator sign-in only:
+The local server provides operator sign-in and a preparation API:
 
 ```sh
 mkdir -m 700 "$HOME/.gen-reality-local"
@@ -64,19 +64,21 @@ Open the printed `http://127.0.0.1:8765` address. Read the token from the privat
 `operator-login.txt` file printed by the server, and enter it in the login form.
 The token never belongs in a URL. The state directory must exist, be private to
 the operator, and remain outside the output tree. Ports must be 1024 to 65535.
-The process uses one coordinator and one loopback origin; it does not serve run
-files or grant budget authority. Startup can recover an abandoned `SUBMITTING`
+The process uses one coordinator and one loopback origin. It serves only fixed
+authenticated media roles and grants no budget authority. Startup can recover an
+abandoned `SUBMITTING`
 job as `SUBMISSION_UNKNOWN`, with its reserve held. Restart rotates the token and
 invalidates earlier sessions. Sign-out or a new login revokes the current session.
 
 The session cookie is signed, HttpOnly, SameSite Strict, and valid for one hour.
 It contains no provider key or budget approval. The local HTTP endpoint requires
-the exact Host and write Origin, CSRF on sign-out, and a bounded JSON login body.
-No provider operation, upload, run creation, approval, or full workflow acceptance
-is available through these routes yet. Test the bootstrap with
+the exact Host and write Origin, CSRF on every protected write, and bounded bodies.
+The API supports local preparation; provider operations and approval are not
+available through these routes. Test the API with
 `python -m pytest tests/integration -m 'not live_provider'`; the optional
 `tests/ui/test_local_session_browser.py` test also needs the pinned Playwright
-package and a local Chromium browser. These tests establish local sign-in only.
+package and a local Chromium browser. The browser test covers sign-in; preparation
+browser controls and full workflow acceptance remain separate work.
 
 The server lifespan also owns an internal `app.preparation.PreparationService`
 using the same coordinator. Its private `preparation.sqlite` is bound to the
@@ -88,18 +90,19 @@ that revision; a guide completed after another edit remains in history without
 replacing the current selection. Prior media and attempt files stay unchanged.
 
 Enter `media_operation(run_id, expected_revision=...)` before reading an upload
-body or guide request. It rejects busy or stale work before yielding a one-use
+body or starting a guide build. It rejects busy or stale work before yielding a one-use
 handle for `import_source`, `import_asset`, or `build_guides`. Imports reuse the
 existing validators and save hash-verified original/validated bytes; guide builds
 reuse those inputs and `prepare_validated_attempt`. Cancellation cannot release
 the slot or remove staging while its worker is still running. `close` drains
 submitted work before the coordinator closes. A request still receiving bytes
 owns its staging until it cancels or yields another chunk; after close it cannot
-submit a worker. The later HTTP adapter must bound its receive time.
+submit a worker. HTTP uploads have a 300-second cooperative total receive deadline
+that ends before media processing starts; it cannot preempt synchronous file I/O.
 
 Restart marks unfinished `BUILDING` attempts `INTERRUPTED`, retains all files,
 and does not adopt or render them again. A later explicit build uses a new attempt
-ID. There are no preparation HTTP routes or browser placement controls yet.
+ID. Browser placement controls are not present yet.
 
 The internal service can also return a fixed `LocalMedia` value containing bytes,
 MIME type and their SHA-256. Await `preview(run_id, expected_revision=..., role=...)`
@@ -112,6 +115,30 @@ share the existing media slot and cancellation/shutdown ownership. They publish
 nothing and do not change revisions. PNG responses are limited to 32 MiB and
 guide videos to 512 MiB. Source/placement previews require normalized video within
 the existing extractor's 256 MiB input limit; larger cache entries are rejected.
+
+All preparation routes require the current session. Writes also require
+`X-CSRF-Token` from `GET /session` and the exact server Origin:
+
+| Route | Body or selection |
+| --- | --- |
+| `POST /runs` | JSON `{}`; the server chooses the run ID and starts its clock. |
+| `GET /runs/{runId}` | Current inputs, revision, placement and guide history. |
+| `POST /runs/{runId}/source` | Raw MP4/MOV, at most 256 MiB. |
+| `POST /runs/{runId}/asset` | Raw RGBA PNG, at most 32 MiB. |
+| `PUT /runs/{runId}/placement` | JSON `expectedRevision,u,v,heightFrac,rotationDeg`; rotation is zero. |
+| `POST /runs/{runId}/guides` | JSON `expectedRevision`; compile both local guides. |
+| `GET /runs/{runId}/preview/{revision}/{role}` | Current `source`, `asset` or `placement` PNG. |
+| `GET /runs/{runId}/guides/{attemptId}/{role}` | Historical `keyframe-a` PNG or `guide-b` MP4. |
+
+Uploads use `X-Expected-Revision`. Source uploads also require
+`X-Clean-Source: true` and `X-Source-Kind: clean_camera` or `synthetic_fixture`;
+asset uploads require `X-Non-Human: true`. Use the matching `video/mp4`,
+`video/quicktime` or `image/png` Content-Type. JSON requests are limited to 4 KiB.
+Busy or stale uploads return 409 before reading their body. Oversize uploads
+return 413; an expired receive deadline returns 408. The response contains only
+fixed public fields and same-origin media URLs, never arbitrary file paths.
+Guide history reports its captured `inputRevision`. If a request is interrupted,
+read the run before starting another build; completed guides may already exist.
 
 Load the default configuration, or pass a path to a JSON file:
 

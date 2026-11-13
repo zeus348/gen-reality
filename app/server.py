@@ -1,9 +1,8 @@
-"""Serve the private operator login on one fixed loopback origin."""
+"""Serve the private local preparation API on one fixed loopback origin."""
 
 import argparse
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-import hmac
 import json
 import os
 from pathlib import Path
@@ -16,13 +15,13 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
-from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, Response
 import uvicorn
 
-from app import local_session
+from app import local_session, preparation_routes
 from app.preparation import PreparationService
+from app.preparation_state import ServiceError
 from core.budget import BudgetLedger
 from core.json_data import unique_fields
 from core.storage import _parent_directory
@@ -182,13 +181,13 @@ def create_app(config: LocalServerConfig) -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=signing_key,
                        session_cookie=local_session.COOKIE_NAME,
                        max_age=local_session.SESSION_SECONDS, same_site="strict", https_only=False)
-    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=local_session.MAX_BODY_BYTES)
+    app.add_middleware(local_session.RouteBodyLimit)
     app.add_middleware(local_session.LocalBoundary, origin=config.origin)
 
     @app.exception_handler(HTTPException)
     async def http_error(request, error):
         codes = {400: "INVALID_REQUEST", 404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED",
-                 413: "BODY_TOO_LARGE"}
+                 413: "BODY_TOO_LARGE", 415: "UNSUPPORTED_MEDIA_TYPE"}
         return local_session.error_response(error.status_code,
             codes.get(error.status_code, "INVALID_REQUEST"))
 
@@ -199,6 +198,10 @@ def create_app(config: LocalServerConfig) -> FastAPI:
     @app.exception_handler(Exception)
     async def internal_error(request, error):
         return local_session.error_response(500, "INTERNAL_ERROR")
+
+    @app.exception_handler(ServiceError)
+    async def service_error(request, error):
+        return preparation_routes.service_error_response(error)
 
     @app.get("/", response_class=HTMLResponse)
     async def login_page():
@@ -225,12 +228,9 @@ def create_app(config: LocalServerConfig) -> FastAPI:
 
     @app.delete("/session")
     async def logout(request: Request):
-        if not sessions.authenticated(request.session):
-            return local_session.error_response(401, "SESSION_REQUIRED")
-        tokens = request.headers.getlist("x-csrf-token")
-        if (len(tokens) != 1 or re.fullmatch(r"[0-9a-f]{64}", tokens[0]) is None
-                or not hmac.compare_digest(tokens[0], sessions.csrf_token)):
-            return local_session.error_response(403, "CSRF_INVALID")
+        error = local_session.require_session(request, write=True)
+        if error is not None:
+            return error
         if await request.body():
             return local_session.error_response(400, "INVALID_REQUEST")
         sessions.session_id = None
@@ -238,6 +238,7 @@ def create_app(config: LocalServerConfig) -> FastAPI:
         request.session.clear()
         return JSONResponse({"authenticated": False})
 
+    app.include_router(preparation_routes.router)
     return app
 
 
