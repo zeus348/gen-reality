@@ -48,6 +48,11 @@ def _output_url(task_id: str, evidence_sha256: str, evidence_root: Path,
         raise ValueError("Success evidence exceeds the response size limit.")
     body = read_verified(evidence_root, StoredArtifact(path, evidence_sha256, size))
     data = json.loads(body, object_pairs_hook=unique_fields)
+    return _output_url_from_data(data, task_id, allowed_hosts)
+
+
+def _output_url_from_data(data: dict, task_id: str, allowed_hosts: frozenset[str]) -> httpx.URL:
+    """Check bounded success JSON against the caller's approved output hosts."""
     if type(data) is not dict or data.get("id") != task_id or data.get("status") != "SUCCEEDED":
         raise ValueError("Success evidence does not match the task.")
     outputs = data.get("output")
