@@ -136,9 +136,15 @@ class BudgetLedger:
 
     def approve_run(self, run_id: str, *, approved_by: str, limit_cents: int,
                     max_attempts: int, cost_cents: int, max_elapsed_minutes: int = 180,
-                    deadline_unix_cap: float | None = None):
-        """Record approval once, capped by a trusted experiment deadline if supplied."""
+                    deadline_unix_cap: float | None = None, only_run: bool = False):
+        """Record approval once, with a deadline cap and optional run guard.
+
+        only_run applies to this call and this ledger. Trusted code must use the
+        same dedicated ledger and pass True for each use of one-run authority.
+        """
         self._run_id(run_id)
+        if type(only_run) is not bool:
+            raise BudgetError("Approval scope must be a boolean.")
         if type(approved_by) is not str or not approved_by.strip() or len(approved_by) > 200:
             raise BudgetError("Budget approval needs an operator identity.")
         for value, maximum in [(limit_cents, 1000), (max_attempts, 6),
@@ -157,6 +163,10 @@ class BudgetLedger:
                 raise BudgetExceeded("Experiment elapsed-time limit has been reached.")
             deadline = min(deadline, deadline_unix_cap)
         with self._transaction() as connection:
+            if only_run and connection.execute(
+                    "SELECT 1 FROM approved_runs WHERE run_id IS NOT ? LIMIT 1", (run_id,)
+            ).fetchone() is not None:
+                raise BudgetError("A different run already has approval in this ledger.")
             try:
                 connection.execute("INSERT INTO approved_runs (run_id, approved_by, limit_cents, max_attempts, "
                                    "cost_cents, started_unix, deadline_unix, last_checked_unix) "
