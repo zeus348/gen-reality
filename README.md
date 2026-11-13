@@ -522,6 +522,31 @@ remain allowed. Missing history does not erase known failures. These are local
 consistency checks; runtime provenance, test coverage, human approval, and
 release outcomes require their own evidence.
 
+`qa.runtime_chain.audit_runtime_chain` checks one explicitly selected creation,
+task GET, and output download chain. The caller supplies verified archive facts,
+the private ledger snapshot, original run start, and separately retained runtime
+pins. Fixed byte envelopes hold five runtime receipts (up to 16 KiB each), the
+request check and two request records (64 KiB each), and the success response
+(1 MiB). The audit reuses request reconstruction and approved-output URL rules.
+It compares the downloaded byte hash and size with the archived raw output.
+
+Creation after documented UNKNOWN reconciliation needs separately accepted
+operator evidence, the original pinned context and send gate, and a task GET
+bound to the reconciliation event. An original result may be UNKNOWN or absent
+after a crash. A result already present in the external pin index cannot be
+hidden by omitting it. No successful creation response is invented. The
+`create_response_observed` field requires both a valid HTTP status and its
+observation timestamp; it does not imply a successful status.
+
+Pin, creation, GET, download, observation, and default-network assessments stay
+separate. Consistent `INJECTED` receipts remain explicit fixture evidence.
+Default network transport requires matching external pins, but does not by
+itself authenticate an account or generation. Missing observation times remain
+incomplete, and later tracking or completion does not violate the spending
+deadline. Results contain safe references and issue codes, without private
+bodies or signed URLs. This pure audit does no I/O or raw-video decoding and
+does not assign release outcomes.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh

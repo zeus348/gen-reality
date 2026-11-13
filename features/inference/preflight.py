@@ -62,6 +62,23 @@ def _match_fields(data: dict, expected: dict) -> None:
         raise PreflightError("Provider evidence does not match the supplied record.")
 
 
+def _check_request_data(data: dict, evidence: StoredArtifact, *,
+                        run_id: str, attempt_id: str) -> CheckedRequest:
+    """Check already bounded, hash-verified request JSON without reading files."""
+    frozen = FrozenCreate(**data["frozen"])
+    _match_fields(data, {"schemaVersion": "1.4", "manifestType": "checked_provider_request",
+                        "runId": run_id, "attemptId": attempt_id,
+                        "payloadSha256": frozen.payload_sha256, "spendingAuthorized": False})
+    if data["sourceKind"] not in ("clean_camera", "synthetic_fixture"):
+        raise PreflightError("Request check has an invalid source kind.")
+    checked, expires = data["checkedAtUnix"], data["validUntilUnix"]
+    _timestamp(checked)
+    _timestamp(expires)
+    if checked >= expires:
+        raise PreflightError("Request check has an invalid time interval.")
+    return CheckedRequest(run_id, attempt_id, data["sourceKind"], frozen, checked, expires, evidence)
+
+
 def read_checked_request(run_root: Path, evidence: StoredArtifact, *,
                          run_id: str, attempt_id: str) -> CheckedRequest:
     """Restore a saved request from a trusted producer's file reference.
@@ -76,18 +93,7 @@ def read_checked_request(run_root: Path, evidence: StoredArtifact, *,
         if evidence.path != expected_path:
             raise PreflightError("Request check path does not match its attempt and hash.")
         data = _read_record(run_root, evidence)
-        frozen = FrozenCreate(**data["frozen"])
-        _match_fields(data, {"schemaVersion": "1.4", "manifestType": "checked_provider_request",
-                            "runId": run_id, "attemptId": attempt_id,
-                            "payloadSha256": frozen.payload_sha256, "spendingAuthorized": False})
-        if data["sourceKind"] not in ("clean_camera", "synthetic_fixture"):
-            raise PreflightError("Request check has an invalid source kind.")
-        checked, expires = data["checkedAtUnix"], data["validUntilUnix"]
-        _timestamp(checked)
-        _timestamp(expires)
-        if checked >= expires:
-            raise PreflightError("Request check has an invalid time interval.")
-        return CheckedRequest(run_id, attempt_id, data["sourceKind"], frozen, checked, expires, evidence)
+        return _check_request_data(data, evidence, run_id=run_id, attempt_id=attempt_id)
     except Exception:
         raise PreflightError("Saved request check could not be verified.") from None
 
