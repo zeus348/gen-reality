@@ -225,6 +225,12 @@ any charge above its quote is retained and blocks further spending. A confirmed 
 charge does not refund an attempt or reopen the elapsed-time limit.
 Reservations alone do not authorize provider calls. The offline CLI does not
 create approvals, record final charges, or call a provider.
+For authority that covers one run, trusted operator code passes `only_run=True`
+to each `approve_run` call on the same dedicated ledger. The approval transaction
+rejects a different previously approved run, even if it expired or was fully
+settled. The default `False` preserves existing multi-run ledger behavior. This
+is a check for that call and ledger, not an authorization registry across ledgers.
+Repeating approval never replaces its original terms or deadline.
 For a new experiment, trusted operator code reads `read_run_start(output_root,
 run_id=...)` and passes its `deadline_unix` to `approve_run` as
 `deadline_unix_cap`. Approval stores the earlier of that cap and its requested
