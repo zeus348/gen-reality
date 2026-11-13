@@ -506,6 +506,22 @@ outside the ZIP are not required. Missing selection stays `NOT_SELECTED`, and
 selected unsigned cards remain invalid. These facts establish archive
 consistency, not provider or reviewer authenticity or a release outcome.
 
+`qa.run_evidence.audit_run_evidence` compares those frozen archive facts with a
+captured `RunSnapshot` and `RunStart`. It performs no I/O. The frozen result
+preserves the existing `RunAudit` and a row for every reservation, including
+duplicates, failed jobs, unknown submissions, and held reserves. Spending totals
+always include the full ledger. Archive checks compare the run, attempt, task,
+payload, reserved cost, success-response hash, raw and metadata references, and
+completion time. Missing completed archives remain incomplete; failed or
+unfinished attempts do not require a completed ZIP.
+
+The separate experiment assessment checks the original 10,800-second interval,
+approval bounds, and recorded approval, reservation, claim, and send times.
+New spending at the deadline is late. Later tracking, completion, and review
+remain allowed. Missing history does not erase known failures. These are local
+consistency checks; runtime provenance, test coverage, human approval, and
+release outcomes require their own evidence.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh
