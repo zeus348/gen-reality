@@ -495,6 +495,17 @@ Historical verification uses no current-clock upper bound. These checks do not
 authenticate a human, actual viewing, provider execution, or decoded media, and
 they do not establish a global outcome or release verdict.
 
+`read_export_attempt_facts` accepts the same archive selection and returns a
+frozen `ExportAttemptFacts` value from one verified ZIP snapshot. It includes
+the existing graph result plus the declared mode, source kind, SDK version,
+task ID, payload and request hashes, reserved cost, completion time, raw output,
+and four private evidence references. This gives later QA checks explicit
+fields to compare with trusted ledger and runtime evidence. It reads only the
+selected ZIP; original media, private provider files, and the inventory file
+outside the ZIP are not required. Missing selection stays `NOT_SELECTED`, and
+selected unsigned cards remain invalid. These facts establish archive
+consistency, not provider or reviewer authenticity or a release outcome.
+
 Save an entered scorecard with the trusted review manifest's path, hash, and size:
 
 ```sh
