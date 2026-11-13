@@ -22,6 +22,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 import uvicorn
 
 from app import local_session
+from app.preparation import PreparationService
 from core.budget import BudgetLedger
 from core.json_data import unique_fields
 from core.storage import _parent_directory
@@ -147,14 +148,17 @@ def create_app(config: LocalServerConfig) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
         owner = None
+        preparation = None
         try:
             _check_config(config)
             ledger = BudgetLedger(config.ledger_path)
             owner = SubmissionCoordinator(ledger)
+            preparation = PreparationService(config.state_dir, config.output_root, owner)
             token = secrets.token_hex(32)
             _publish_login_token(config, token)
             sessions.bootstrap_token = token
             app.state.coordinator = owner
+            app.state.preparation = preparation
             print(f"Local server: {config.origin}", flush=True)
             print(f"Operator login file: {config.token_path}", flush=True)
             yield
@@ -163,11 +167,17 @@ def create_app(config: LocalServerConfig) -> FastAPI:
         finally:
             sessions.clear()
             app.state.coordinator = None
-            if owner is not None:
-                owner.close()
+            app.state.preparation = None
+            try:
+                if preparation is not None:
+                    preparation.close()
+            finally:
+                if owner is not None:
+                    owner.close()
 
     app = FastAPI(lifespan=lifespan, debug=False, openapi_url=None, docs_url=None, redoc_url=None)
     app.state.coordinator = None
+    app.state.preparation = None
     app.state.sessions = sessions
     app.add_middleware(SessionMiddleware, secret_key=signing_key,
                        session_cookie=local_session.COOKIE_NAME,
