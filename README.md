@@ -53,7 +53,7 @@ Use Python 3.11 or later. Install the Python dependencies:
 python -m pip install -r requirements.txt
 ```
 
-The local server provides operator sign-in and a preparation API:
+The local server provides operator sign-in, local preparation, and a preparation API:
 
 ```sh
 mkdir -m 700 "$HOME/.gen-reality-local"
@@ -66,8 +66,7 @@ The token never belongs in a URL. The state directory must exist, be private to
 the operator, and remain outside the output tree. Ports must be 1024 to 65535.
 The process uses one coordinator and one loopback origin. It serves only fixed
 authenticated media roles and grants no budget authority. Startup can recover an
-abandoned `SUBMITTING`
-job as `SUBMISSION_UNKNOWN`, with its reserve held. Restart rotates the token and
+abandoned `SUBMITTING` job as `SUBMISSION_UNKNOWN`, with its reserve held. Restart rotates the token and
 invalidates earlier sessions. Sign-out or a new login revokes the current session.
 
 The session cookie is signed, HttpOnly, SameSite Strict, and valid for one hour.
@@ -76,9 +75,16 @@ the exact Host and write Origin, CSRF on every protected write, and bounded bodi
 The API supports local preparation; provider operations and approval are not
 available through these routes. Test the API with
 `python -m pytest tests/integration -m 'not live_provider'`; the optional
-`tests/ui/test_local_session_browser.py` test also needs the pinned Playwright
-package and a local Chromium browser. The browser test covers sign-in; preparation
-browser controls and full workflow acceptance remain separate work.
+browser tests in `tests/ui` also need the pinned Playwright package and a local
+Chromium browser. They cover sign-in and local preparation, not a complete provider workflow.
+
+After sign-in, follow **Prepare local guides**. Start a local run explicitly,
+upload its source and transparent PNG, and enter the requested declarations.
+Drag the asset or use the position and height fields. These controls change a
+draft only: choose **Save placement** to see the exact server preview, then
+**Create A and B guides**. The canvas is a placement aid; the saved preview is
+authoritative. Guide history opens unchanged earlier attempts. Reload restores
+the current run; only its ID is stored in the browser, with no credential or media.
 
 The server lifespan also owns an internal `app.preparation.PreparationService`
 using the same coordinator. Its private `preparation.sqlite` is bound to the
@@ -102,7 +108,7 @@ that ends before media processing starts; it cannot preempt synchronous file I/O
 
 Restart marks unfinished `BUILDING` attempts `INTERRUPTED`, retains all files,
 and does not adopt or render them again. A later explicit build uses a new attempt
-ID. Browser placement controls are not present yet.
+ID. A failed or interrupted request does not automatically start another build.
 
 The internal service can also return a fixed `LocalMedia` value containing bytes,
 MIME type and their SHA-256. Await `preview(run_id, expected_revision=..., role=...)`
