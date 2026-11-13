@@ -182,10 +182,11 @@ class LocalBootstrapTests(unittest.TestCase):
                     self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
                     for private in (token, str(config.state_dir), str(config.output_root), "RUNWAY_API_KEY"):
                         self.assertNotIn(private, response.text)
-            for path in ("/openapi.json", "/docs", "/redoc", "/runs", "/attempts"):
+            for path in ("/openapi.json", "/docs", "/redoc", "/attempts"):
                 response = client.get(path)
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(set(response.json()), {"error"})
+            self.error(client.get("/runs"), 405, "METHOD_NOT_ALLOWED")
             self.assertEqual(client.put("/session", headers={"Origin": config.origin}).status_code, 405)
 
     def test_host_headers_are_exact_and_checked_before_cookie_decode(self):

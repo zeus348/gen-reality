@@ -1,11 +1,15 @@
-"""Protect the fixed loopback login routes before reading a request body."""
+"""Protect the fixed loopback routes before reading a request body."""
 
 from dataclasses import dataclass
 import hmac
 import re
 import secrets
 
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from starlette.responses import JSONResponse
+
+from features.asset.ingest import MAX_FILE_BYTES
+from features.media.ingest import MAX_INPUT_BYTES
 
 
 MAX_BODY_BYTES = 4096
@@ -28,6 +32,43 @@ SECURITY_HEADERS = {
 def error_response(status: int, code: str) -> JSONResponse:
     return JSONResponse({"error": {"code": code}}, status_code=status,
                         headers=SECURITY_HEADERS)
+
+
+def require_session(request, *, write=False):
+    """Check the current login before a protected route reads its body."""
+    sessions = request.app.state.sessions
+    if not sessions.authenticated(request.session):
+        return error_response(401, "SESSION_REQUIRED")
+    if write:
+        tokens = request.headers.getlist("x-csrf-token")
+        if (len(tokens) != 1 or re.fullmatch(r"[0-9a-f]{64}", tokens[0]) is None
+                or not hmac.compare_digest(tokens[0], sessions.csrf_token)):
+            return error_response(403, "CSRF_INVALID")
+    return None
+
+
+def request_body_limit(scope):
+    """Grant larger bodies only to the two fixed upload routes."""
+    if scope.get("method") == "POST":
+        match = re.fullmatch(r"/runs/run-[0-9a-f]{32}/(source|asset)", scope.get("path", ""))
+        if match is not None:
+            return MAX_INPUT_BYTES if match[1] == "source" else MAX_FILE_BYTES
+    return MAX_BODY_BYTES
+
+
+class RouteBodyLimit:
+    """Select the shipped byte counter without reading or buffering a body."""
+
+    def __init__(self, app):
+        self.app = app
+        self.limits = {limit: RequestBodyLimitMiddleware(app, max_body_size=limit)
+                       for limit in (MAX_BODY_BYTES, MAX_INPUT_BYTES, MAX_FILE_BYTES)}
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        await self.limits[request_body_limit(scope)](scope, receive, send)
 
 
 @dataclass
@@ -125,7 +166,7 @@ class LocalBoundary:
         if lengths:
             if re.fullmatch(rb"[0-9]{1,20}", lengths[0]) is None:
                 return error_response(400, "INVALID_REQUEST")
-            if int(lengths[0]) > MAX_BODY_BYTES:
+            if int(lengths[0]) > request_body_limit(scope):
                 return error_response(413, "BODY_TOO_LARGE")
         if scope["method"] == "POST" and scope["path"] == "/session":
             content_types = headers.get(b"content-type", [])
