@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generative Reality — Local sign-in</title>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Generative Reality</h1>
+    <p>Enter the operator token from the private login file shown in your terminal.</p>
+    <form id="login-form">
+      <label for="login-token">Operator token</label>
+      <input id="login-token" data-testid="login-token" type="password" autocomplete="off"
+             maxlength="64" required>
+      <button data-testid="login-button" type="submit">Sign in</button>
+    </form>
+    <p data-testid="session-status" role="status">Not signed in.</p>
+    <button data-testid="logout-button" type="button" hidden>Sign out</button>
+  </main>
+</body>
+</html>
