@@ -13,14 +13,24 @@ from uuid import uuid4
 from core import run_start
 from core.config import load_config
 from core.storage import publish_bytes
-from features.asset.ingest import load_asset
+from features.asset.ingest import AssetError, ValidatedAsset, load_asset
 from features.guidance.video import DEFAULT_PROMPT, compile_guidance
-from features.media.ingest import normalize_video
+from features.media.ingest import MediaError, NormalizedVideo, normalize_video
 from features.placement.math import Placement
 
 
 def _json_bytes(value) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+
+
+def _check_attempt_inputs(run_id, attempt_id, clean_source, source_kind):
+    for name in (run_id, attempt_id):
+        if type(name) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) is None:
+            raise ValueError("Run and attempt IDs must contain 1 to 64 letters, digits, underscores, or hyphens.")
+    if clean_source is not True:
+        raise ValueError("Confirm that the source is a clean fixed-camera clip.")
+    if source_kind not in ("clean_camera", "synthetic_fixture"):
+        raise ValueError("Source kind must be clean_camera or synthetic_fixture.")
 
 
 def prepare_attempt(
@@ -44,16 +54,50 @@ def prepare_attempt(
     This offline primitive does not start an experiment clock. Application
     callers use prepare_run_attempt before any media work.
     """
-    for name in (run_id, attempt_id):
-        if type(name) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) is None:
-            raise ValueError("Run and attempt IDs must contain 1 to 64 letters, digits, underscores, or hyphens.")
-    if clean_source is not True:
-        raise ValueError("Confirm that the source is a clean fixed-camera clip.")
-    if source_kind not in ("clean_camera", "synthetic_fixture"):
-        raise ValueError("Source kind must be clean_camera or synthetic_fixture.")
+    _check_attempt_inputs(run_id, attempt_id, clean_source, source_kind)
     config = load_config()
     asset = load_asset(asset_path, non_human=non_human)
     video = normalize_video(source_path)
+    return _publish_validated_attempt(video, asset, output_root, run_id, attempt_id, placement,
+                                      source_suffix=Path(source_path).suffix.lower(),
+                                      source_kind=source_kind, prompt=prompt, config=config)
+
+
+def prepare_validated_attempt(
+    video: NormalizedVideo,
+    asset: ValidatedAsset,
+    output_root: Path,
+    run_id: str,
+    attempt_id: str,
+    placement: Placement,
+    *,
+    source_suffix: str,
+    non_human: bool,
+    clean_source: bool,
+    source_kind: str = "clean_camera",
+    prompt: str = DEFAULT_PROMPT,
+) -> dict:
+    """Compile and freeze inputs already returned by the media validators.
+
+    The caller retains the original source suffix, .mp4 or .mov. This helper
+    does not read original paths, normalize media, or start the experiment clock.
+    It requires explicit provenance declarations, which do not prove visual quality.
+    Publication remains create-only, with the manifest written last.
+    """
+    _check_attempt_inputs(run_id, attempt_id, clean_source, source_kind)
+    if non_human is not True:
+        raise AssetError("Confirm that the asset is non-human.")
+    if type(source_suffix) is not str or source_suffix not in (".mp4", ".mov"):
+        raise MediaError("Source must be an MP4 or MOV file.")
+    config = load_config()
+    return _publish_validated_attempt(video, asset, output_root, run_id, attempt_id, placement,
+                                      source_suffix=source_suffix, source_kind=source_kind,
+                                      prompt=prompt, config=config)
+
+
+def _publish_validated_attempt(video, asset, output_root, run_id, attempt_id, placement, *,
+                               source_suffix, source_kind, prompt, config):
+    """Share the compiler and exact frozen layout between trusted callers."""
     guidance = compile_guidance(video, asset, placement, prompt)
     root = Path(output_root) / run_id
     prefix = f"attempts/{attempt_id}/"
@@ -68,7 +112,7 @@ def prepare_attempt(
 
     # This fixed path claims the attempt before any source-dependent path exists.
     publish("frozen/placement.json", _json_bytes(placement_data))
-    original_name = "frozen/source_original" + Path(source_path).suffix.lower()
+    original_name = "frozen/source_original" + source_suffix
     publish(original_name, video.original_bytes)
     publish("frozen/source_normalized.mp4", video.video_bytes)
     publish("frozen/asset_original.png", asset.original_bytes)
